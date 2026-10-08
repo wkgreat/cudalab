@@ -1,0 +1,254 @@
+{
+  // Build tasks for the CUDA lab.
+  //
+  // CMake is the only build system: every task below calls
+  // scripts/build-cmake.ps1 or scripts/run-demos.ps1, which configure and build
+  // with the Ninja presets from CMakePresets.json.
+  //
+  //   Ctrl+Shift+B            -> "CMake: build all demos (ninja-debug)"
+  //   Ctrl+Shift+P > Run Task -> pick any task below
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "env: refresh env.json + clangd database",
+      "detail": "Detect this machine's paths, write env.json, regenerate compile_commands.json",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/sync-env.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: build all demos (ninja-debug)",
+      "detail": "Configure + build every demo target under src/demos",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-cmake.ps1",
+        "-Preset",
+        "ninja-debug"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: build all demos (ninja-release)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-cmake.ps1",
+        "-Preset",
+        "ninja-release"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: build one demo (ninja-debug)",
+      "detail": "Build a single demo target; prompts for the demo directory name",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-cmake.ps1",
+        "-Preset",
+        "ninja-debug",
+        "-Demo",
+        "${input:demo}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: clean rebuild all demos (ninja-debug)",
+      "detail": "Wipe the configure cache and rebuild everything",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-cmake.ps1",
+        "-Preset",
+        "ninja-debug",
+        "-Clean"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: build + run all demos (ninja-debug)",
+      "detail": "Compile everything, then run each demo and check its exit code",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-cmake.ps1",
+        "-Preset",
+        "ninja-debug",
+        "-Run"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$msCompile"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CMake: run all demos (ninja-debug)",
+      "detail": "Run the demo executables that are already built",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/run-demos.ps1",
+        "-Preset",
+        "ninja-debug"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "CUDA: profile a demo (Nsight Compute)",
+      "detail": "Per-kernel metrics. Needs administrator rights or GPU counter permission - see README.",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/profile.ps1",
+        "-Tool",
+        "compute",
+        "-Set",
+        "detailed",
+        "-Demo",
+        "${input:demo}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "CUDA: profile a demo (Nsight Systems)",
+      "detail": "Timeline trace of the process, including kernel and memcpy activity",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/profile.ps1",
+        "-Tool",
+        "systems",
+        "-Demo",
+        "${input:demo}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "CUDA: show device (nvidia-smi)",
+      "type": "shell",
+      "command": "nvidia-smi",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "demo",
+      "type": "promptString",
+      "description": "Demo directory name under src/demos",
+      "default": "demo_add_one"
+    }
+  ]
+}

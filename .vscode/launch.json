@@ -1,0 +1,49 @@
+{
+  // Debug configuration for the CMake (Ninja) build.
+  //
+  // This uses "cppvsdbg", the MSVC debugger, and debugs the *host* code of the
+  // program: main(), the CUDA runtime calls, and the host-side launcher. You
+  // can break inside the launcher and inspect the launch configuration, but you
+  // cannot step through kernel code on Windows: CUDA-GDB does not exist for
+  // Windows, and the NVIDIA Nsight VS Code extension only contributes
+  // cuda-gdb / cuda-gdbserver, which are Linux-only.
+  //
+  // The demo is chosen with the input prompt below, and the preLaunchTask
+  // builds exactly that target first.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "CUDA: demo (ninja-debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/ninja-debug/${input:demo}.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "symbolSearchPath": "${workspaceFolder}/build/ninja-debug",
+      "preLaunchTask": "CMake: build one demo (ninja-debug)"
+    }
+  ],
+  // Kernel debugging on Linux/WSL2, kept here for reference: build inside WSL,
+  // then launch with the type contributed by the NVIDIA Nsight VS Code
+  // extension. Requires cuda-gdb in the WSL distribution.
+  //
+  // {
+  //   "name": "CUDA: demo (WSL2, cuda-gdb)",
+  //   "type": "cuda-gdb",
+  //   "request": "launch",
+  //   "program": "${workspaceFolder}/build/ninja-debug/${input:demo}",
+  //   "args": [],
+  //   "cwd": "${workspaceFolder}",
+  //   "stopAtEntry": false
+  // }
+  "inputs": [
+    {
+      "id": "demo",
+      "type": "promptString",
+      "description": "Demo directory name under src/demos",
+      "default": "demo_add_one"
+    }
+  ]
+}

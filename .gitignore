@@ -1,6 +1,33 @@
+# CUDA intermediates
 *.i
 *.ii
 *.gpu
 *.ptx
 *.cubin
 *.fatbin
+
+# Build output
+build/
+out/
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.sln
+.vs/
+
+# Profiler reports
+profiles/
+*.ncu-rep
+*.nsys-rep
+*.sqlite
+
+# Tooling artifacts
+compile_commands.json
+.cache/
+
+# Editor
+*.code-workspace

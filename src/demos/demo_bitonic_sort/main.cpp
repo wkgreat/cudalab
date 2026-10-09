@@ -6,12 +6,12 @@
 
 int main() {
 
-  int n = 1024;
+  int n = 1000;
   int nMismatch = 0;
 
   int *h_vals = cudalab::common::randomInt(n);
 
-  cudalab::cudaBitonicSortInt(h_vals, n, true);
+  cudalab::bitonicSortInt(h_vals, h_vals, n, true);
 
   for (int i = 1; i < n; ++i) {
     if (h_vals[i] < h_vals[i - 1]) {
@@ -24,6 +24,8 @@ int main() {
   if (nMismatch > 0) {
     std::printf("cudaBitonicSortInt error, num of mismatch=%d\n", nMismatch);
     return EXIT_FAILURE;
+  } else {
+    std::printf("cudaBitonicSortInt pass.\n");
   }
 
   return EXIT_SUCCESS;

@@ -9,7 +9,7 @@
     {
       "name": "ninja-debug",
       "displayName": "Ninja Debug",
-      "description": "Needs cl.exe on PATH: run through scripts/build-cmake.ps1, or from a VS Developer PowerShell. The CUDA architecture comes from env.json, not from here.",
+      "description": "Ninja + Debug. On Linux nvcc uses g++ and the toolkit path comes from env.json, so no environment setup is required. The CUDA architecture comes from env.json, not from here.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/ninja-debug",
       "cacheVariables": {
@@ -19,7 +19,7 @@
     {
       "name": "ninja-release",
       "displayName": "Ninja Release",
-      "description": "Needs cl.exe on PATH: run through scripts/build-cmake.ps1, or from a VS Developer PowerShell. The CUDA architecture comes from env.json, not from here.",
+      "description": "Ninja + Release. On Linux nvcc uses g++ and the toolkit path comes from env.json, so no environment setup is required. The CUDA architecture comes from env.json, not from here.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/ninja-release",
       "cacheVariables": {

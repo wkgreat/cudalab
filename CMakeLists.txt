@@ -32,6 +32,23 @@ if(EXISTS "${CUDALAB_ENV_FILE}")
     endif()
 endif()
 
+# The CUDA compiler search only ever looks on PATH, but a toolkit installed
+# under /usr/local/cuda keeps nvcc in a bin/ directory that is frequently not on
+# it. env.json names the root, so point CMake at the nvcc inside it. Like the
+# architecture below this must happen before project(), and a command-line
+# -DCMAKE_CUDA_COMPILER=... still wins because setting a cache entry does not
+# overwrite an existing one.
+if(CUDALAB_CUDA_ROOT AND NOT DEFINED CMAKE_CUDA_COMPILER)
+    if(WIN32)
+        set(cudalab_nvcc "${CUDALAB_CUDA_ROOT}/bin/nvcc.exe")
+    else()
+        set(cudalab_nvcc "${CUDALAB_CUDA_ROOT}/bin/nvcc")
+    endif()
+    if(EXISTS "${cudalab_nvcc}")
+        set(CMAKE_CUDA_COMPILER "${cudalab_nvcc}" CACHE FILEPATH "CUDA compiler")
+    endif()
+endif()
+
 # This has to be set BEFORE project(). Enabling the CUDA language installs its
 # own default for this cache entry, so a later `if(NOT DEFINED ...)` never fires
 # and silently builds for the wrong architecture. Setting a cache entry does not
@@ -73,23 +90,42 @@ endif()
 # Compile settings shared by the shared library and every demo
 # ---------------------------------------------------------------------------
 function(cudalab_configure_target target has_cuda)
-    target_compile_options(${target} PRIVATE
-        # CUDA 13 headers contain non-ASCII bytes; without /utf-8 MSVC reports
-        # C4819 on a CJK code page and the console fills with warnings.
-        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
-        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>
-        # Keep line information so a profiler can map SASS back to source. Only
-        # for non-Debug builds: -G already implies line info and ptxas rejects
-        # both.
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CONFIG:Debug>>>:-lineinfo>
-        # Device-side debug information in Debug builds only.
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-G>
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-g>
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-Xcompiler=/Zi>
-        $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:/Zi>)
+    if(MSVC)
+        # MSVC (Windows) needs its own spellings: gcc/clang reject /utf-8, /Zi
+        # and -Xcompiler=/utf-8 outright.
+        target_compile_options(${target} PRIVATE
+            # CUDA 13 headers contain non-ASCII bytes; without /utf-8 MSVC
+            # reports C4819 on a CJK code page and the console fills with
+            # warnings.
+            $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>
+            # Keep line information so a profiler can map SASS back to source.
+            # Only for non-Debug builds: -G already implies line info and ptxas
+            # rejects both.
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CONFIG:Debug>>>:-lineinfo>
+            # Device-side debug information in Debug builds only.
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-G>
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-g>
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-Xcompiler=/Zi>
+            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:/Zi>)
 
-    set_target_properties(${target} PROPERTIES
-        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        set_target_properties(${target} PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    else()
+        # gcc/clang spellings. -Xcompiler keeps the flag on the host compiler
+        # side of nvcc.
+        target_compile_options(${target} PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-finput-charset=UTF-8>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-finput-charset=UTF-8>
+            # Keep line information so a profiler can map SASS back to source.
+            # Only for non-Debug builds: -G already implies line info and ptxas
+            # rejects both.
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CONFIG:Debug>>>:-lineinfo>
+            # Device-side debug information in Debug builds only.
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-G>
+            $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-g>
+            $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Debug>>:-g>)
+    endif()
 
     # A target without any .cu file is plain C++; it must not pull in the CUDA
     # runtime.

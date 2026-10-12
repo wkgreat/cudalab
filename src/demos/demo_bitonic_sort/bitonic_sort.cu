@@ -58,8 +58,60 @@ int bitonicSortInt(int *h_vals, int *h_out, size_t n, bool asc) {
   return 0;
 }
 
+__device__ void swapInt(int &a, int &b) {
+  int t = a;
+  a = b;
+  b = t;
+}
+
+__global__ void fillInt32Kernel(int *d_vals, int val, size_t n) {
+  size_t i = blockDim.x * blockIdx.x + threadIdx.x;
+
+  if (i >= n)
+    return;
+
+  d_vals[i] = val;
+}
+
+__global__ void cudaBitonicSortIntKernel(int *d_vals, size_t n, bool asc, int k,
+                                         int j) {
+
+  size_t i = blockDim.x * blockIdx.x + threadIdx.x;
+
+  if (i >= n)
+    return;
+
+  int a = i ^ j;
+
+  if (i < a) {
+    bool up = ((i & k) == 0) == asc; // i%k==0 equalTo i/k%2==0
+    if (up ? (d_vals[i] > d_vals[a]) : (d_vals[i] < d_vals[a])) {
+      swapInt(d_vals[i], d_vals[a]);
+    }
+  }
+}
+
 cudaError_t cudaBitonicSortInt(int *h_vals, int *h_out, size_t n, bool asc) {
-  // TODO
+
+  size_t m = bitCeil(n);
+
+  int numThreads = 128;
+  int numBlocks = (m + 1) / numThreads;
+
+  int *d_vals;
+  cudaMalloc(&d_vals, sizeof(int) * m);
+  fillInt32Kernel<<<numBlocks, numThreads>>>(
+      d_vals, std::numeric_limits<int>::max(), m);
+  cudaMemcpy(d_vals, h_vals, n * sizeof(int), cudaMemcpyHostToDevice);
+
+  for (int k = 2; k <= m; k <<= 1) {
+    for (int j = k / 2; j > 0; j >>= 1) {
+      cudaBitonicSortIntKernel<<<numBlocks, numThreads>>>(d_vals, m, asc, k, j);
+    }
+  }
+
+  cudaMemcpy(h_out, d_vals, n * sizeof(int), cudaMemcpyDeviceToHost);
+  cudaFree(d_vals);
   return cudaSuccess;
 }
 

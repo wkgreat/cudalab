@@ -1,0 +1,9 @@
+{
+  "name": "cudalab",
+  "version": "1.0.0",
+  "description": "CUDA lab - one executable target per demo, unit tested with Catch2",
+  "dependencies": [
+    "catch2"
+  ],
+  "builtin-baseline": "e12aaf7336cc1e348c43a1244f348451b534c0a9"
+}

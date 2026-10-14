@@ -38,5 +38,23 @@
       "displayName": "Build ninja-release",
       "configurePreset": "ninja-release"
     }
+  ],
+  "testPresets": [
+    {
+      "name": "ninja-debug",
+      "displayName": "Test ninja-debug",
+      "configurePreset": "ninja-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Test ninja-release",
+      "configurePreset": "ninja-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

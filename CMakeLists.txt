@@ -32,6 +32,34 @@ if(EXISTS "${CUDALAB_ENV_FILE}")
     endif()
 endif()
 
+# vcpkg - the package manager behind vcpkg.json, which supplies Catch2 to the
+# unit tests. Its root is machine-specific just like the CUDA paths above, so it
+# comes from the same env.json; VCPKG_ROOT is only a fallback for a checkout
+# whose env.json predates this section. Pointing CMake at the toolchain before
+# project() puts vcpkg into manifest mode: it reads vcpkg.json and installs the
+# declared ports into <build>/vcpkg_installed. A -DCMAKE_TOOLCHAIN_FILE=... on
+# the command line still wins, and a missing vcpkg root just builds without it.
+set(CUDALAB_VCPKG_ROOT "")
+if(EXISTS "${CUDALAB_ENV_FILE}")
+    string(JSON cudalab_vcpkg_root_value ERROR_VARIABLE cudalab_vcpkg_root_error
+        GET "${cudalab_env_json}" vcpkg root)
+    if(NOT cudalab_vcpkg_root_error AND cudalab_vcpkg_root_value)
+        set(CUDALAB_VCPKG_ROOT "${cudalab_vcpkg_root_value}")
+    endif()
+endif()
+if(NOT CUDALAB_VCPKG_ROOT AND DEFINED ENV{VCPKG_ROOT})
+    set(CUDALAB_VCPKG_ROOT "$ENV{VCPKG_ROOT}")
+endif()
+
+if(CUDALAB_VCPKG_ROOT AND NOT CMAKE_TOOLCHAIN_FILE)
+    set(cudalab_vcpkg_toolchain "${CUDALAB_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+    if(EXISTS "${cudalab_vcpkg_toolchain}")
+        set(CMAKE_TOOLCHAIN_FILE "${cudalab_vcpkg_toolchain}" CACHE FILEPATH "vcpkg toolchain file")
+    else()
+        message(WARNING "cudalab: vcpkg root '${CUDALAB_VCPKG_ROOT}' has no scripts/buildsystems/vcpkg.cmake, building without vcpkg")
+    endif()
+endif()
+
 # The CUDA compiler search only ever looks on PATH, but a toolkit installed
 # under /usr/local/cuda keeps nvcc in a bin/ directory that is frequently not on
 # it. env.json names the root, so point CMake at the nvcc inside it. Like the
@@ -173,6 +201,54 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# CTest and Catch2 (Catch2 is installed by vcpkg from vcpkg.json)
+#
+#   tests/*.cpp                 ->  target cudalab_tests
+#   src/demos/<demo>/test*.cpp  ->  target <demo>_test
+#
+# include(CTest) is what writes DartConfiguration.tcl into the build tree. Plain
+# `ctest` does not need it, but `ctest -T test` - the dashboard mode VS Code's
+# CMake Tools drives - reads it and fails with "Cannot find file:
+# DartConfiguration.tcl" when it is missing. include(CTest) also enables testing
+# and defines the conventional BUILD_TESTING switch, so tests run only when both
+# it and CUDALAB_BUILD_TESTS are on.
+#
+# Catch2 has to be located here, before the demo loop: the loop builds a test
+# target for every demo that ships a test source, and each of those links it.
+# A checkout without a vcpkg root keeps working, the tests simply stay off.
+# ---------------------------------------------------------------------------
+include(CTest)
+
+option(CUDALAB_BUILD_TESTS "Build the Catch2 unit tests" ON)
+
+set(CUDALAB_CATCH2_AVAILABLE FALSE)
+
+if(CUDALAB_BUILD_TESTS AND BUILD_TESTING)
+    find_package(Catch2 3 CONFIG QUIET)
+    if(Catch2_FOUND)
+        set(CUDALAB_CATCH2_AVAILABLE TRUE)
+        include(Catch)
+        message(STATUS "cudalab: Catch2 ${Catch2_VERSION} found -> unit tests enabled")
+    else()
+        message(WARNING
+            "cudalab: Catch2 not found - unit tests disabled. Either env.json's "
+            "vcpkg.root (or the VCPKG_ROOT environment variable) does not point "
+            "at a vcpkg checkout, or this build tree was first configured before "
+            "vcpkg was added: CMake reads CMAKE_TOOLCHAIN_FILE only on a build "
+            "tree's first configure, so delete ${CMAKE_BINARY_DIR} and configure "
+            "again.")
+    endif()
+elseif(NOT BUILD_TESTING)
+    message(STATUS "cudalab: BUILD_TESTING=OFF, unit tests disabled")
+endif()
+
+# The tests/ directory is independent of the demos. cudalab_common already
+# exists at this point, which is the one thing the tests link.
+if(CUDALAB_CATCH2_AVAILABLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+    add_subdirectory(tests)
+endif()
+
+# ---------------------------------------------------------------------------
 # Demo layout
 #
 #   src/demos/<demo_name>/       ->  executable target <demo_name>
@@ -216,24 +292,47 @@ endif()
 
 # --- One executable target per demo ----------------------------------------
 set(demo_count 0)
+set(cudalab_demo_targets "")
+set(cudalab_test_targets "")
 
 foreach(demo IN LISTS demo_names)
     set(demo_dir "${CUDALAB_DEMOS_DIR}/${demo}")
 
-    file(GLOB demo_sources CONFIGURE_DEPENDS
+    file(GLOB demo_all_sources CONFIGURE_DEPENDS
         "${demo_dir}/*.cu"
         "${demo_dir}/*.cpp"
         "${demo_dir}/*.cxx"
         "${demo_dir}/*.cc")
 
-    if(NOT demo_sources)
+    if(NOT demo_all_sources)
         # Happens while a demo directory exists but is still empty; skipping
         # keeps a work-in-progress directory from breaking the configure step.
         message(STATUS "cudalab: skipping '${demo}' - no .cu/.cpp sources yet")
         continue()
     endif()
 
+    # Split the directory by role. By convention the driver is main.* and a
+    # Catch2 test is test*.cpp / test_*.cpp; everything else is the demo's own
+    # implementation. The executable is driver + implementation, the test
+    # target implementation + test - each brings its own main, which is why the
+    # driver must stay out of the test.
+    set(demo_sources "")
+    set(demo_impl_sources "")
+    set(demo_test_sources "")
+    foreach(source IN LISTS demo_all_sources)
+        get_filename_component(source_name "${source}" NAME)
+        if(source_name MATCHES "^test.*\\.(cu|cpp|cxx|cc)$")
+            list(APPEND demo_test_sources "${source}")
+        else()
+            list(APPEND demo_sources "${source}")
+            if(NOT source_name MATCHES "^main\\.(cu|cpp|cxx|cc)$")
+                list(APPEND demo_impl_sources "${source}")
+            endif()
+        endif()
+    endforeach()
+
     add_executable(${demo} ${demo_sources})
+    list(APPEND cudalab_demo_targets "${demo}")
 
     # The demo's own directory holds its headers, so `#include "add_one.h"`
     # resolves without any extra setup.
@@ -264,7 +363,80 @@ foreach(demo IN LISTS demo_names)
         message(STATUS "cudalab: demo '${demo}' -> target ${demo} (C++ only)")
     endif()
 
+    # --- The demo's own Catch2 tests, when it has a test*.cpp ---------------
+    if(demo_test_sources)
+        if(CUDALAB_CATCH2_AVAILABLE)
+            set(demo_test_target "${demo}_test")
+
+            add_executable(${demo_test_target} ${demo_impl_sources} ${demo_test_sources})
+            target_include_directories(${demo_test_target} PRIVATE "${demo_dir}")
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
+                target_include_directories(${demo_test_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+            endif()
+            if(TARGET cudalab_common)
+                target_link_libraries(${demo_test_target} PRIVATE cudalab_common)
+            endif()
+            target_link_libraries(${demo_test_target} PRIVATE Catch2::Catch2WithMain)
+
+            set(demo_test_has_cuda FALSE)
+            foreach(source IN LISTS demo_impl_sources demo_test_sources)
+                if(source MATCHES "\\.cu$")
+                    set(demo_test_has_cuda TRUE)
+                endif()
+            endforeach()
+
+            cudalab_configure_target(${demo_test_target} ${demo_test_has_cuda})
+
+            # The [benchmark] case runs with the rest of the suite, so `ctest`
+            # exercises it as well; the sample count is trimmed here so the
+            # timing table does not dominate the run. Run the binary directly
+            # for Catch2's full default of 100 samples.
+            #
+            # PRE_TEST discovery (rather than the POST_BUILD default) matters for
+            # the IDE flow: with POST_BUILD, CTest keeps a `<target>_NOT_BUILT`
+            # placeholder until the test target itself has been built, and VS
+            # Code's Test integration builds the *active* target - a demo driver,
+            # not the test - then runs ctest, so the placeholder survives and
+            # every run reports "Could not find executable". PRE_TEST discovers
+            # at ctest startup, which only needs the test binary to exist.
+            catch_discover_tests(${demo_test_target}
+                EXTRA_ARGS --benchmark-samples 20 --benchmark-resamples 1000
+                DISCOVERY_MODE PRE_TEST)
+
+            # Tying the test binary to the build is handled after the loop:
+            # ctest runs *every* test binary, so a single aggregate target makes
+            # all of them build no matter which target the IDE picked.
+            list(APPEND cudalab_test_targets "${demo_test_target}")
+
+            if(demo_test_has_cuda)
+                message(STATUS "cudalab: demo '${demo}' tests -> target ${demo_test_target} (CUDA)")
+            else()
+                message(STATUS "cudalab: demo '${demo}' tests -> target ${demo_test_target} (C++ only)")
+            endif()
+        else()
+            message(STATUS "cudalab: demo '${demo}' ships tests but testing is off (BUILD_TESTING/CUDALAB_BUILD_TESTS), skipping ${demo}_test")
+        endif()
+    endif()
+
     math(EXPR demo_count "${demo_count} + 1")
 endforeach()
 
 message(STATUS "cudalab: ${demo_count} demo target(s) configured from ${CUDALAB_DEMOS_DIR}")
+
+# ---------------------------------------------------------------------------
+# ctest runs every test binary, so whichever target the IDE builds has to build
+# them all. The IDE builds the *active* target - normally one demo driver - not
+# `all`, so each demo is made to depend on one aggregate target that pulls in
+# every test executable. That way `cmake --build --target demo_add_one` (or any
+# other demo) leaves ctest with real tests and no `<target>_NOT_BUILT`
+# placeholder; with PRE_TEST discovery that placeholder is the only thing ctest
+# can fall back to when a test binary is missing.
+# ---------------------------------------------------------------------------
+if(cudalab_test_targets)
+    add_custom_target(cudalab_build_tests)
+    add_dependencies(cudalab_build_tests ${cudalab_test_targets})
+    foreach(demo_target IN LISTS cudalab_demo_targets)
+        add_dependencies(${demo_target} cudalab_build_tests)
+    endforeach()
+    message(STATUS "cudalab: demo targets depend on cudalab_build_tests (${cudalab_test_targets})")
+endif()

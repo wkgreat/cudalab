@@ -1,11 +1,13 @@
 #include "bitonic_sort.h"
+#include "common/perf.h"
 #include "common/random.h"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 
 int test_bitonicSortInt() {
-  int n = 1000;
+
+  int n = 1024000;
   int nMismatch = 0;
 
   int *h_vals = cudalab::common::randomInt(n);
@@ -32,7 +34,7 @@ int test_bitonicSortInt() {
 
 int test_cudaBitonicSortInt() {
 
-  int n = 1000;
+  int n = 1024000;
   int nMismatch = 0;
 
   int *h_vals = cudalab::common::randomInt(n);
@@ -59,8 +61,19 @@ int test_cudaBitonicSortInt() {
 
 int main() {
 
+  cudalab::perf::Clock clock;
+  clock.start();
   test_bitonicSortInt();
+  clock.stop();
+  auto dur0 = clock.duration().count();
+
+  clock.start();
   test_cudaBitonicSortInt();
+  clock.stop();
+  auto dur1 = clock.duration().count();
+
+  printf("test_bitonicSortInt\tTime=%ld\n", dur0);
+  printf("test_cudaBitonicSortInt\tTime=%ld\n", dur1);
 
   return EXIT_SUCCESS;
 }

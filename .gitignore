@@ -29,5 +29,9 @@ profiles/
 compile_commands.json
 .cache/
 
+# vcpkg manifest mode output
+vcpkg_installed/
+vcpkg-manifest-install.log
+
 # Editor
 *.code-workspace

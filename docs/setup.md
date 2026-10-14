@@ -26,13 +26,15 @@
   "cuda":       { "root": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3", "arch": "120" },
   "msvc":       { "vcvars64": "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvars64.bat" },
   "windowsSdk": { "ucrtInclude": "C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/ucrt" },
-  "cmake":      { "path": "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" }
+  "cmake":      { "path": "C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" },
+  "vcpkg":      { "root": "C:/vcpkg" }
 }
 ```
 
 | 谁在读 | 读什么 | 用在哪儿 |
 | --- | --- | --- |
 | `CMakeLists.txt` | `cuda.arch`、`cuda.root` | `CMAKE_CUDA_ARCHITECTURES`、`CUDAToolkit_ROOT` |
+| `CMakeLists.txt` | `vcpkg.root` | `CMAKE_TOOLCHAIN_FILE`（vcpkg manifest 模式，提供 Catch2） |
 | `scripts/build-cmake.ps1` | 全部 | MSVC 环境、CMake 定位、生成 clangd 编译库 |
 | `scripts/sync-env.ps1` | 全部 | 打印 + 生成 clangd 编译库 |
 
@@ -77,6 +79,9 @@
 | `cmake.path` | PATH 上的 cmake，否则 VS 自带的 |
 
 探测不出来的（机器上装了多个 CUDA / 多个 Windows SDK、想固定某个版本）才需要手工改。
+
+`vcpkg.root` 目前**不在自动探测范围**：`env.json` 里没有它就回退到环境变量
+`VCPKG_ROOT`（vcpkg 自己的约定），两者都没有时只是跳过单元测试，不影响 demo 构建。
 
 ## 4. 构建脚本与执行顺序
 
@@ -205,6 +210,8 @@ Windows 上**不能单步调试 kernel**：CUDA-GDB 只有 Linux 版，
 | `clangd --check` 全部 8 个条目 | ✅ 8/8 `0 errors`，且**不使用 `.clangd`** |
 | `env.json` 驱动架构（写成 86 后干净配置） | ✅ 提示与 `CMakeCache.txt` 均为 86，恢复后为 120 |
 | **模拟新机器**：删掉 `env.json` + 编译库 + build 目录后构建 | ✅ 一条命令完成探测、重建、生成编译库、`PASS` |
+| `cudalab_tests`（vcpkg 装的 Catch2 3.15.3，`ctest --preset ninja-debug`） | ✅ 8/8 通过（`randomInt` 6 项 + `perf::Clock` 2 项） |
+| `demo_bitonic_sort_test`（CPU/CUDA、升/降序、2 的幂与非 2 的幂、5 种输入形态，对比 `std::sort`） | ✅ 5 个 test case、4712 条断言全过（`ctest` 合计 13/13） |
 
 ## 11. 一个必须记住的 CMake 坑
 
@@ -221,3 +228,139 @@ project(cudalab ... LANGUAGES CXX CUDA)
 
 放在 `project()` 之前是安全的：设置 cache 变量不会覆盖已存在的值，
 所以命令行 `-DCMAKE_CUDA_ARCHITECTURES=...` 仍然优先。
+
+## 12. vcpkg 与 Catch2 单元测试
+
+依赖由 vcpkg 以 **manifest 模式**管理，清单是仓库根目录的 `vcpkg.json`：
+
+```json
+{
+  "name": "cudalab",
+  "version": "1.0.0",
+  "dependencies": [ "catch2" ],
+  "builtin-baseline": "e12aaf7336cc1e348c43a1244f348451b534c0a9"
+}
+```
+
+`builtin-baseline` 钉在 vcpkg 仓库的一个 commit 上，换机器、换时间都装到同一个
+catch2 版本（本机实测 **3.15.3**）。
+
+### vcpkg 根目录从哪来
+
+和 CUDA 路径一样，vcpkg 根目录是机器相关的，也放进 `env.json`：
+
+```json
+"vcpkg": { "root": "/home/wk/softwares/vcpkg" }
+```
+
+`CMakeLists.txt` 在 `project()` **之前**读它并设置 `CMAKE_TOOLCHAIN_FILE`，配置阶段
+vcpkg 就会自动读取 `vcpkg.json`、把 catch2 装到 `build/<preset>/vcpkg_installed/`
+（该目录已被 git 忽略）。命令行显式传 `-DCMAKE_TOOLCHAIN_FILE=...` 仍然优先。
+
+`env.json` 里没有 `vcpkg.root` 时回退到环境变量 `VCPKG_ROOT`（vcpkg 自己的约定）；
+两者都没有就**跳过单元测试**，项目照常构建，配置末尾给一条 warning。
+
+> **坑**：CMake 只在 build tree **第一次** configure 时读 `CMAKE_TOOLCHAIN_FILE`。
+> 在已有的 `build/<preset>` 上新增 vcpkg 不会生效，提示会是 “Catch2 not found”。
+> 删掉 `build/<preset>` 重新配置即可 —— 构建目录本来就是可再生产物。
+
+### 测试怎么组织
+
+测试放两个地方，CMake 都会自动发现：
+
+| 位置 | 生成的 target | 参与编译的源文件 |
+| --- | --- | --- |
+| `tests/*.cpp` | `cudalab_tests` | 该目录下全部 `.cpp` |
+| `src/demos/<demo>/test*.cpp` | `<demo>_test` | 该 demo 目录里除 `main.*`、`test*` 以外的源文件 + `test*` |
+
+约定：demo 目录里 **`main.*` 是驱动，`test*.cpp` 是 Catch2 测试，其余是待测实现**。
+测试 target 复用实现源文件（如 `bitonic_sort.cu`），但不含 `main.*` —— 它的 `main()`
+由 `Catch2::Catch2WithMain` 提供，这样 demo 可执行文件和测试各有一个 main，互不冲突。
+
+- 每个 Catch2 `TEST_CASE` 由 `catch_discover_tests` 注册成一个 CTest 用例（用 `DISCOVERY_MODE PRE_TEST`，见下）；
+- 加测试 = 往 `tests/` 或某个 demo 目录放一个 `.cpp`，不用改 `CMakeLists.txt`；
+- 两者都链接 `cudalab_common`，顺带拿到 `src/` 头文件路径（可以写
+  `#include "common/random.h"`）；
+- `-DCUDALAB_BUILD_TESTS=OFF` 关闭全部测试。
+
+> **VS Code Test 集成的坑**：CMake Tools 跑测试前编译的是**当前选中的 target**
+> （通常是某个 demo 驱动，比如 `demo_bitonic_sort`），**不会**去编译 `<demo>_test`。
+> 用默认的 `POST_BUILD` 发现模式时，CTest 里会一直留着一条
+> `<demo>_test_NOT_BUILT-<hash>` 占位用例，`ctest` 直接报
+> `Could not find executable`。这里做了两件事兜住它：
+>
+> 1. `catch_discover_tests(... DISCOVERY_MODE PRE_TEST)` —— 测试列表在 ctest 启动时
+>    才发现（而不是编译期），只要测试可执行文件在磁盘上就行；
+> 2. 一个聚合 target `cudalab_build_tests` 依赖**全部** `<demo>_test`，并让每个 demo 驱动
+>    都依赖它 —— 因为 `ctest` 跑的是全部测试二进制，而 IDE 只编译「当前选中的那个」；
+>    这样 `cmake --build --target <任意 demo>` 都会把所有测试二进制一起编出来。
+
+```powershell
+cmake --preset ninja-debug
+cmake --build --preset ninja-debug --target demo_bitonic_sort_test
+ctest --preset ninja-debug
+```
+
+`CMakePresets.json` 里补了对应的 `testPresets`：`--output-on-failure` 已打开，输出保持 ctest 默认 —— 每个用例一行 `Test #k … Passed/Failed`，只有失败用例才回显完整输出。
+
+顶层 `CMakeLists.txt` 里调了 `include(CTest)`，它会生成 `DartConfiguration.tcl`。
+这一步不能省：裸 `ctest` 用不到它，但 **`ctest -T test`（VS Code CMake Tools 的
+Test 集成走的就是这个模式）会读它**，缺了就直接报
+`Cannot find file: .../DartConfiguration.tcl`。`include(CTest)` 还顺带定义了标准的
+`BUILD_TESTING`，所以测试要同时满足 `BUILD_TESTING` 和 `CUDALAB_BUILD_TESTS`
+（默认都为 ON）；`-DBUILD_TESTING=OFF` 或 `-DCUDALAB_BUILD_TESTS=OFF` 都能关掉。
+
+### 性能测试
+
+`demo_bitonic_sort/test.cpp` 用 Catch2 的 `BENCHMARK` 量了 CPU / GPU 的排序耗时，标签是
+普通的 `[benchmark]`（**不是** Catch2 那个会隐藏用例的 `[!benchmark]`），所以它和别的
+用例一样会随 `ctest` 一起跑。两个 `BENCHMARK` 用**同一个 `n`**（`test.cpp` 里的
+`kN = 1 << 18`，即 262,144），CPU / GPU 两行是同一问题、可直接对比；想看更大规模的数字
+就改这个常量。
+
+### 测试输出
+
+测试用 Catch2 原生的 `console` reporter，`ctest --preset ninja-debug` 的输出就是 Catch2 / CTest
+的默认形态：每个用例一行结果、末尾一段汇总，只有失败用例才回显完整输出。
+
+直接跑二进制时，`console` reporter **不会**逐条列出通过的用例（只有产生输出或失败的用例才有
+用例名，所以默认只会看到 benchmark 那条 + 末尾汇总）。想看「一行一个用例、benchmark 均值附在
+行尾」的紧凑输出，用仓库自带的 `oneline` reporter（`include/cudalab/oneline_reporter.hpp`，
+`CATCH_REGISTER_REPORTER` 注册，默认不启用）：
+
+```bash
+./build/ninja-debug/demo_bitonic_sort_test --reporter oneline
+```
+
+```
+both implementations sort a size that is not a power of two PASS
+bitonic sort performance ...................................PASS
+    bitonicSortInt (CPU, n=262144)      96.455 ms
+    cudaBitonicSortInt (GPU, n=262144)  1.813 ms
+...
+
+-------------------------------------------------------------------------------
+benchmark results
+-------------------------------------------------------------------------------
+benchmark name                           samples  iters      est run         mean     low mean    high mean      std dev  low std dev high std dev
+bitonicSortInt (CPU, n=262144)                 5      1   485.510 ms    96.455 ms    96.142 ms    96.996 ms     472.8 us     140.5 us     646.2 us
+cudaBitonicSortInt (GPU, n=262144)             5      1     9.035 ms     1.813 ms     1.784 ms     1.893 ms      54.8 us       1.9 us      70.2 us
+```
+
+用例行的 benchmark 均值**换行**缩进在下方；整套跑完后，末尾统一打印完整的性能表
+（samples / iters / est run / mean / low mean / high mean / std dev / low & high std dev）。
+
+这是**可选**的：`ctest` 与默认运行仍用 `console`。想让 `ctest` 也走 oneline，把
+`catch_discover_tests(...)` 的 `EXTRA_ARGS` 加上 `--reporter oneline` 即可。
+
+想看 `BENCHMARK` 打印的完整计时表，绕过 ctest 直接跑二进制：
+
+```bash
+./build/ninja-release/demo_bitonic_sort_test "[benchmark]"
+./build/ninja-release/demo_bitonic_sort_test "[benchmark]" --benchmark-samples 100
+```
+
+采样数：CTest 里跑时由 CMake 传了 `--benchmark-samples 20 --benchmark-resamples 1000`，
+让计时表不至于拖慢整套测试；直接跑二进制则是 Catch2 默认的 100 次。
+
+Debug 构建的数字没有参考价值（只带 `-g`、不优化），量性能请用 `ninja-release`。

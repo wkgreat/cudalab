@@ -100,6 +100,15 @@ endif()
 # support alone does not define it.
 find_package(CUDAToolkit REQUIRED)
 
+# Provides the imported OpenCL::OpenCL target used by demos that ship a .cl
+# kernel. OpenCL is declared in vcpkg.json; that port builds the Khronos
+# OpenCL SDK (headers + ICD loader) and its config package exposes
+# OpenCL::OpenCL, which transitively carries the CL/ header include path. The
+# CONFIG form is the package's documented lookup - CUDALAB_CUDA_ROOT's nvcc
+# logic has already been resolved above, and unlike the CUDA toolkit OpenCL is
+# a vcpkg dependency rather than a machine path in env.json.
+find_package(OpenCL CONFIG REQUIRED)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
@@ -117,7 +126,7 @@ endif()
 # ---------------------------------------------------------------------------
 # Compile settings shared by the shared library and every demo
 # ---------------------------------------------------------------------------
-function(cudalab_configure_target target has_cuda)
+function(cudalab_configure_target target has_cuda has_opencl)
     if(MSVC)
         # MSVC (Windows) needs its own spellings: gcc/clang reject /utf-8, /Zi
         # and -Xcompiler=/utf-8 outright.
@@ -161,6 +170,13 @@ function(cudalab_configure_target target has_cuda)
         target_link_libraries(${target} PRIVATE CUDA::cudart)
         set_target_properties(${target} PROPERTIES CUDA_RUNTIME_LIBRARY Static)
     endif()
+
+    # OpenCL demos link the ICD loader; it is a normal C++ library, so unlike
+    # CUDA it needs no special compile settings beyond the include path the
+    # target already carries.
+    if(has_opencl)
+        target_link_libraries(${target} PRIVATE OpenCL::OpenCL)
+    endif()
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -189,7 +205,7 @@ if(common_sources)
 
     add_library(cudalab_common STATIC ${common_sources})
     target_include_directories(cudalab_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    cudalab_configure_target(cudalab_common ${common_has_cuda})
+    cudalab_configure_target(cudalab_common ${common_has_cuda} FALSE)
 
     if(common_has_cuda)
         message(STATUS "cudalab: shared library -> cudalab_common (${common_sources}) (CUDA)")
@@ -304,6 +320,11 @@ foreach(demo IN LISTS demo_names)
         "${demo_dir}/*.cxx"
         "${demo_dir}/*.cc")
 
+    # A .cl file marks the demo as using OpenCL. The kernel is loaded at
+    # runtime by the driver rather than compiled into the executable, so it is
+    # only used to decide whether to link OpenCL - never added to the target.
+    file(GLOB demo_cl_sources CONFIGURE_DEPENDS "${demo_dir}/*.cl")
+
     if(NOT demo_all_sources)
         # Happens while a demo directory exists but is still empty; skipping
         # keeps a work-in-progress directory from breaking the configure step.
@@ -355,10 +376,19 @@ foreach(demo IN LISTS demo_names)
         endif()
     endforeach()
 
-    cudalab_configure_target(${demo} ${demo_has_cuda})
+    set(demo_has_opencl FALSE)
+    if(demo_cl_sources)
+        set(demo_has_opencl TRUE)
+    endif()
 
-    if(demo_has_cuda)
+    cudalab_configure_target(${demo} ${demo_has_cuda} ${demo_has_opencl})
+
+    if(demo_has_cuda AND demo_has_opencl)
+        message(STATUS "cudalab: demo '${demo}' -> target ${demo} (CUDA + OpenCL)")
+    elseif(demo_has_cuda)
         message(STATUS "cudalab: demo '${demo}' -> target ${demo} (CUDA)")
+    elseif(demo_has_opencl)
+        message(STATUS "cudalab: demo '${demo}' -> target ${demo} (OpenCL)")
     else()
         message(STATUS "cudalab: demo '${demo}' -> target ${demo} (C++ only)")
     endif()
@@ -385,7 +415,12 @@ foreach(demo IN LISTS demo_names)
                 endif()
             endforeach()
 
-            cudalab_configure_target(${demo_test_target} ${demo_test_has_cuda})
+            # The test target reuses the demo's implementation sources, so it
+            # needs the same OpenCL linkage as the driver when the demo ships a
+            # .cl kernel.
+            set(demo_test_has_opencl ${demo_has_opencl})
+
+            cudalab_configure_target(${demo_test_target} ${demo_test_has_cuda} ${demo_test_has_opencl})
 
             # The [benchmark] case runs with the rest of the suite, so `ctest`
             # exercises it as well; the sample count is trimmed here so the
@@ -408,14 +443,42 @@ foreach(demo IN LISTS demo_names)
             # all of them build no matter which target the IDE picked.
             list(APPEND cudalab_test_targets "${demo_test_target}")
 
-            if(demo_test_has_cuda)
+            if(demo_test_has_cuda AND demo_test_has_opencl)
+                message(STATUS "cudalab: demo '${demo}' tests -> target ${demo_test_target} (CUDA + OpenCL)")
+            elseif(demo_test_has_cuda)
                 message(STATUS "cudalab: demo '${demo}' tests -> target ${demo_test_target} (CUDA)")
+            elseif(demo_test_has_opencl)
+                message(STATUS "cudalab: demo '${demo}' tests -> target ${demo_test_target} (OpenCL)")
             else()
                 message(STATUS "cudalab: demo '${demo}' tests -> target ${demo_test_target} (C++ only)")
             endif()
         else()
             message(STATUS "cudalab: demo '${demo}' ships tests but testing is off (BUILD_TESTING/CUDALAB_BUILD_TESTS), skipping ${demo}_test")
         endif()
+    endif()
+
+    # A .cl kernel is opened by name at runtime from the working directory,
+    # which is the build directory, so stage each kernel next to the
+    # executables. The copy is tracked as a file dependency, so editing a
+    # kernel re-stages it on the next build - it is a build step, not a source
+    # of the target.
+    if(demo_cl_sources)
+        foreach(cl_source IN LISTS demo_cl_sources)
+            get_filename_component(cl_name "${cl_source}" NAME)
+            set(staged_cl "${CMAKE_CURRENT_BINARY_DIR}/${cl_name}")
+            add_custom_command(
+                OUTPUT "${staged_cl}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${cl_source}" "${staged_cl}"
+                DEPENDS "${cl_source}"
+                VERBATIM)
+            set(stage_target "${demo}_stage_${cl_name}")
+            add_custom_target(${stage_target} DEPENDS "${staged_cl}")
+            add_dependencies(${demo} ${stage_target})
+            if(demo_test_target)
+                add_dependencies(${demo_test_target} ${stage_target})
+            endif()
+        endforeach()
     endif()
 
     math(EXPR demo_count "${demo_count} + 1")

@@ -16,7 +16,7 @@ TEST_CASE("opencl add one", "[opencl][add_one]") {
   int *h_vals1 = (int *)malloc(sizeof(int) * n);
   memcpy(h_vals1, h_vals0, sizeof(int) * n);
 
-  cudalab::ocl::oclAddOne(h_vals1, n);
+  REQUIRE(cudalab::ocl::oclAddOne(h_vals1, n) == 0);
 
   for (int i = 0; i < n; ++i) {
     int d = h_vals1[i] - h_vals0[i];

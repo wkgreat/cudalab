@@ -1,0 +1,41 @@
+[workspace]
+name = "cudalab"
+version = "0.1.0"
+description = "CUDA lab - one executable target per demo, built with CMake/Ninja"
+channels = ["conda-forge", "nvidia"]
+platforms = ["win-64", "linux-64"]
+
+[dependencies]
+cmake = ">=3.24"
+ninja = ">=1.11"
+clang-tools = ">=18"
+
+[target.linux-64.dependencies]
+cuda-toolkit = ">=13,<14"
+gxx_linux-64 = ">=13,<15"
+powershell = ">=7"
+
+[target.win-64.dependencies]
+vs2026_win-64 = "*"
+
+[target.win-64.tasks]
+env = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-env.ps1 -Refresh"
+build-debug = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cmake.ps1 -Preset ninja-debug"
+build-release = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cmake.ps1 -Preset ninja-release"
+build = "pixi run build-release"
+clean = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cmake.ps1 -Preset ninja-debug -Clean"
+run = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cmake.ps1 -Preset ninja-debug -Run"
+test-debug = "ctest --preset ninja-debug"
+test-release = "ctest --preset ninja-release"
+test = "ctest --preset ninja-release"
+
+[target.linux-64.tasks]
+env = "pwsh -NoProfile -File scripts/sync-env.ps1"
+configure = "cmake --preset ninja-debug"
+build-debug = { cmd = "cmake --build --preset ninja-debug", depends-on = [
+    "configure",
+    "env",
+] }
+build = "pixi run build-release"
+build-release = "cmake --build --preset ninja-release"
+test = "ctest --preset ninja-debug"

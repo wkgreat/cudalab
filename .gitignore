@@ -29,9 +29,15 @@ profiles/
 compile_commands.json
 .cache/
 
+# pixi environment (pixi.lock is committed, the installed env is not)
+.pixi/
+
 # vcpkg manifest mode output
 vcpkg_installed/
 vcpkg-manifest-install.log
+
+# vcpkg checkout managed by pixi (scripts/setup-vcpkg.ps1)
+.vcpkg/
 
 # Editor
 *.code-workspace

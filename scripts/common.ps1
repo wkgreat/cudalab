@@ -66,7 +66,16 @@ function Get-CudalabMsvcInstallPath {
         throw 'vswhere.exe not found; install Visual Studio with the C++ workload (nvcc needs cl.exe as its host compiler).'
     }
 
-    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    # Toolchain preference: the newest Visual Studio first (VS 2026 / 18.x),
+    # then VS 2022 (17.x). -latest already returns the highest version present,
+    # so the second query only matters on a machine where 18.x is missing.
+    $vsPath = & $vswhere -latest -products * -version '[18.0,19.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vsPath) {
+        $vsPath = & $vswhere -latest -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    }
+    if (-not $vsPath) {
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    }
     if (-not $vsPath) {
         throw 'No Visual Studio installation with the MSVC C++ toolset was found (nvcc needs cl.exe as its host compiler).'
     }
@@ -144,6 +153,36 @@ function Format-CudalabCommandLine {
             }) -join ' ')
 }
 
+# True on Windows PowerShell 5.1 and on pwsh running on Windows, false elsewhere.
+function Test-CudalabWindows {
+    if ($null -ne $IsWindows) {
+        return [bool]$IsWindows
+    }
+
+    return ($env:OS -eq 'Windows_NT')
+}
+
+# Locate the CUDA toolkit without env.json: CUDA_PATH/CUDA_HOME first, then nvcc
+# on PATH (which is what a pixi environment provides), then /usr/local/cuda.
+# Returns an empty string when nothing is found.
+function Get-CudalabCudaRoot {
+    $candidates = @($env:CUDA_PATH, $env:CUDA_HOME)
+
+    $nvcc = (Get-Command nvcc -ErrorAction SilentlyContinue).Source
+    if ($nvcc) {
+        $candidates += Split-Path -Parent (Split-Path -Parent $nvcc)
+    }
+    $candidates += '/usr/local/cuda'
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return ($candidate -replace '\\', '/')
+        }
+    }
+
+    return ''
+}
+
 # Read a configure preset's binary directory from CMakePresets.json.
 function Resolve-CudalabBuildDir {
     param(
@@ -188,12 +227,13 @@ function Get-CudalabBuiltExecutables {
 }
 
 # ---------------------------------------------------------------------------
-# env.json - the one file that knows anything about this machine
+# env.json - the machine-specific paths pixi cannot supply
 #
-# CUDA toolkit root and compute capability, the MSVC environment script, the
-# Windows SDK UCRT include directory and CMake's location all live there. Every
-# other artifact (the CMake cache, compile_commands.json) is derived from it, so
-# moving to another machine means refreshing that single file - or deleting it
+# The CUDA toolkit root, the MSVC environment script and the Windows SDK UCRT
+# include directory live there. Everything else is derived: CMake/Ninja/clangd
+# (and, on Linux, CUDA and gcc) come from pixi.toml, the GPU's architecture from
+# CMake's "native", and the compile database is rendered from the build tree.
+# Moving to another machine means refreshing that single file - or deleting it
 # and letting the detection below write a fresh one.
 # ---------------------------------------------------------------------------
 
@@ -215,12 +255,23 @@ function Get-CudalabEnv {
 
     $path = Get-CudalabEnvPath -RepoRoot $RepoRoot
 
+    # Off Windows there is nothing to record: pixi supplies the toolchain
+    # (CMake, Ninja, clangd and, on Linux, CUDA and gcc), the architecture comes
+    # from CMake's "native", and there is no Visual Studio or Windows SDK. The
+    # object is still returned so the clangd database can be rendered.
+    if (-not (Test-CudalabWindows)) {
+        return [pscustomobject]@{
+            cuda       = [pscustomobject]@{ root = (Get-CudalabCudaRoot) }
+            msvc       = [pscustomobject]@{ vcvars64 = '' }
+            windowsSdk = [pscustomobject]@{ ucrtInclude = '' }
+        }
+    }
+
     if (-not $Refresh -and (Test-Path $path)) {
         try {
             $loaded = Get-Content $path -Raw | ConvertFrom-Json
-            if ($loaded.cuda.root -and $loaded.cuda.arch -and
-                $loaded.msvc.vcvars64 -and $loaded.windowsSdk.ucrtInclude -and
-                $loaded.cmake.path) {
+            if ($loaded.cuda.root -and
+                $loaded.msvc.vcvars64 -and $loaded.windowsSdk.ucrtInclude) {
                 return $loaded
             }
             Write-Host '==> env.json is incomplete; detecting again' -ForegroundColor Yellow
@@ -255,17 +306,9 @@ function New-CudalabEnv {
     }
     $cudaRoot = $cudaRoot -replace '\\', '/'
 
-    # --- compute capability of the installed GPU ----------------------------
-    $arch = '120'
-    try {
-        $capability = (& nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null | Select-Object -First 1)
-        if ($capability -and ($capability.Trim() -match '^(\d+)\.(\d+)$')) {
-            $arch = "$($Matches[1])$($Matches[2])"
-        }
-    }
-    catch {
-        # No GPU or no driver: keep the fallback and let the user correct it.
-    }
+    # The GPU's compute capability is no longer written here. CMake derives the
+    # architecture from the GPU that is present via CMAKE_CUDA_ARCHITECTURES=native
+    # (CMake 3.24+), and the clangd database detects it on the fly.
 
     # --- MSVC environment ---------------------------------------------------
     $vsPath = Get-CudalabMsvcInstallPath
@@ -288,11 +331,8 @@ function New-CudalabEnv {
         throw "Windows SDK UCRT include directory not found under '$sdkInclude'."
     }
 
-    # --- CMake --------------------------------------------------------------
-    $cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
-    if (-not $cmake) {
-        $cmake = Join-Path $vsPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
-    }
+    # CMake is not recorded: it is taken from PATH, and inside a pixi
+    # environment that is the pinned CMake from pixi.toml.
 
     # Written by hand rather than ConvertTo-Json: this file is meant to be read
     # and corrected by a human on a new machine, and ConvertTo-Json's indentation
@@ -300,19 +340,15 @@ function New-CudalabEnv {
     # and a BOM would end up inside the first key.
     $json = @"
 {
-  "_comment": "Machine-specific paths for this checkout. Regenerate with scripts/sync-env.ps1 -Refresh; everything else is derived from here.",
+  "_comment": "Machine-specific paths for this checkout. Regenerate with scripts/sync-env.ps1 -Refresh; everything else is derived from here. Only what pixi cannot supply lives here.",
   "cuda": {
-    "root": "$cudaRoot",
-    "arch": "$arch"
+    "root": "$cudaRoot"
   },
   "msvc": {
     "vcvars64": "$($vcvars -replace '\\', '/')"
   },
   "windowsSdk": {
     "ucrtInclude": "$($ucrt -replace '\\', '/')"
-  },
-  "cmake": {
-    "path": "$($cmake -replace '\\', '/')"
   }
 }
 "@
@@ -426,24 +462,61 @@ function New-CudalabClangDatabase {
         throw "compile_commands.json not found in '$BuildDir'; configure the project first."
     }
 
-    $cudaRoot = $Env.cuda.root -replace '\\', '/'
-    $ucrt = $Env.windowsSdk.ucrtInclude -replace '\\', '/'
+    $cudaRoot = $Env.cuda.root
+    if (-not $cudaRoot) {
+        $cudaRoot = Get-CudalabCudaRoot
+    }
+    $cudaRoot = $cudaRoot -replace '\\', '/'
+
+    $ucrt = ''
+    if ($Env.windowsSdk -and $Env.windowsSdk.ucrtInclude) {
+        $ucrt = $Env.windowsSdk.ucrtInclude -replace '\\', '/'
+    }
+
+    # System include directories clangd cannot discover by itself: the Windows SDK
+    # UCRT on Windows, the CUDA toolkit on both platforms. Directories that do not
+    # exist are left out, so the same code runs on Linux.
+    $systemIncludeDirs = @()
+    if ($ucrt) {
+        $systemIncludeDirs += $ucrt
+    }
+    if ($cudaRoot) {
+        $systemIncludeDirs += "$cudaRoot/include"
+        $systemIncludeDirs += "$cudaRoot/include/cccl"
+    }
 
     # Added by this generator; dropped from the copied flags to avoid duplicates.
-    $managedIncludes = @($ucrt, "$cudaRoot/include", "$cudaRoot/include/cccl") |
-        ForEach-Object { $_.ToLowerInvariant() }
+    $managedIncludes = @($systemIncludeDirs | ForEach-Object { $_.ToLowerInvariant() })
 
-    $systemIncludes = @(
-        '-isystem', $ucrt
-        '-isystem', "$cudaRoot/include"
-        '-isystem', "$cudaRoot/include/cccl"
-    )
-    $cudaFlags = @(
-        '-x', 'cuda'
-        "--cuda-path=$cudaRoot"
-        "--cuda-gpu-arch=sm_$($Env.cuda.arch)"
-        '-Wno-unknown-cuda-version'
-    )
+    $systemIncludes = @()
+    foreach ($systemIncludeDir in $systemIncludeDirs) {
+        $systemIncludes += @('-isystem', $systemIncludeDir)
+    }
+
+    # clangd needs an explicit --cuda-gpu-arch, and CMake's "native" is not kept
+    # anywhere reusable, so detect the GPU here. An explicit cuda.arch in
+    # env.json still wins, for a machine that must pin one.
+    $arch = $Env.cuda.arch
+    if (-not $arch) {
+        try {
+            $capability = (& nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>$null | Select-Object -First 1)
+            if ($capability -and ($capability.Trim() -match '^(\d+)\.(\d+)$')) {
+                $arch = "$($Matches[1])$($Matches[2])"
+            }
+        }
+        catch {
+            # No GPU or no driver: fall through to the default below.
+        }
+    }
+    if (-not $arch) {
+        $arch = '120'
+    }
+
+    $cudaFlags = @('-x', 'cuda')
+    if ($cudaRoot) {
+        $cudaFlags += "--cuda-path=$cudaRoot"
+    }
+    $cudaFlags += @("--cuda-gpu-arch=sm_$arch", '-Wno-unknown-cuda-version')
 
     $buildDirSlash = $BuildDir -replace '\\', '/'
     $entries = @()

@@ -1,24 +1,29 @@
 cmake_minimum_required(VERSION 3.24)
 
 # ---------------------------------------------------------------------------
-# env.json - the only machine-specific file in the repository
+# env.json - the remaining machine-specific paths
 #
-# It carries the CUDA toolkit root and the GPU's compute capability, plus the
-# MSVC environment, the Windows SDK UCRT include directory and CMake's location.
-# Reading it means a new machine only has to refresh that one file;
-# scripts/sync-env.ps1 writes it from detection. The compute capability used to
-# be pinned in CMakePresets.json and the CUDA paths in a .clangd file - both are
-# gone, so nothing else needs editing per machine.
+# It holds only what pixi cannot supply: the CUDA toolkit root, the MSVC
+# environment script and the Windows SDK UCRT include directory (see pixi.toml -
+# cmake, ninja, clangd and, on Linux, the CUDA toolkit all come from pixi).
+# scripts/sync-env.ps1 writes it from detection. On Linux nothing is needed at
+# all: nvcc and g++ are on PATH inside the pixi environment.
+#
+# The GPU's compute capability is no longer stored here: the architecture
+# defaults to CMake's own "native" (CMake 3.24+), so the value follows the GPU
+# that is actually present. An explicit cuda.arch in env.json still wins, for a
+# machine with several GPUs or a cross build.
 #
 # This runs before project() on purpose: see the note on the cache entry below.
 # ---------------------------------------------------------------------------
-set(CUDALAB_CUDA_ARCH "120")
+set(CUDALAB_CUDA_ARCH "native")
 set(CUDALAB_CUDA_ROOT "")
 set(CUDALAB_ENV_FILE "${CMAKE_CURRENT_SOURCE_DIR}/env.json")
 
 if(EXISTS "${CUDALAB_ENV_FILE}")
     file(READ "${CUDALAB_ENV_FILE}" cudalab_env_json)
 
+    # Optional: pin the architecture instead of letting CMake detect it.
     string(JSON cudalab_arch_value ERROR_VARIABLE cudalab_arch_error
         GET "${cudalab_env_json}" cuda arch)
     if(NOT cudalab_arch_error AND cudalab_arch_value)
@@ -32,13 +37,14 @@ if(EXISTS "${CUDALAB_ENV_FILE}")
     endif()
 endif()
 
-# vcpkg - the package manager behind vcpkg.json, which supplies Catch2 to the
-# unit tests. Its root is machine-specific just like the CUDA paths above, so it
-# comes from the same env.json; VCPKG_ROOT is only a fallback for a checkout
-# whose env.json predates this section. Pointing CMake at the toolchain before
-# project() puts vcpkg into manifest mode: it reads vcpkg.json and installs the
-# declared ports into <build>/vcpkg_installed. A -DCMAKE_TOOLCHAIN_FILE=... on
-# the command line still wins, and a missing vcpkg root just builds without it.
+# vcpkg - the package manager behind vcpkg.json, which supplies Catch2 and
+# OpenCL. Looked up in three places, in order: an explicit vcpkg.root in
+# env.json (machine-specific), the .vcpkg/ checkout pixi manages (pixi run
+# vcpkg), and finally the VCPKG_ROOT environment variable that vcpkg itself
+# defines. Pointing CMake at the toolchain before project() puts vcpkg into
+# manifest mode: it reads vcpkg.json and installs the declared ports into
+# <build>/vcpkg_installed. A -DCMAKE_TOOLCHAIN_FILE=... on the command line
+# still wins, and a missing vcpkg root just builds without it.
 set(CUDALAB_VCPKG_ROOT "")
 if(EXISTS "${CUDALAB_ENV_FILE}")
     string(JSON cudalab_vcpkg_root_value ERROR_VARIABLE cudalab_vcpkg_root_error
@@ -46,6 +52,10 @@ if(EXISTS "${CUDALAB_ENV_FILE}")
     if(NOT cudalab_vcpkg_root_error AND cudalab_vcpkg_root_value)
         set(CUDALAB_VCPKG_ROOT "${cudalab_vcpkg_root_value}")
     endif()
+endif()
+if(NOT CUDALAB_VCPKG_ROOT AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.vcpkg/scripts/buildsystems/vcpkg.cmake")
+    set(CUDALAB_VCPKG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.vcpkg")
 endif()
 if(NOT CUDALAB_VCPKG_ROOT AND DEFINED ENV{VCPKG_ROOT})
     set(CUDALAB_VCPKG_ROOT "$ENV{VCPKG_ROOT}")

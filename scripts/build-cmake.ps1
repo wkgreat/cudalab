@@ -43,12 +43,9 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $cudalabEnv = Get-CudalabEnv -RepoRoot $repoRoot
 
 # --- Locate CMake -----------------------------------------------------------
-# A standalone CMake on PATH always wins; env.json is the fallback for a machine
-# where CMake is not on PATH, and Visual Studio's bundled copy the last resort.
+# PATH always wins - inside a pixi environment that is the CMake pinned by
+# pixi.toml - and Visual Studio's bundled copy is the last resort.
 $cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source
-if (-not $cmake -and $cudalabEnv.cmake.path -and (Test-Path $cudalabEnv.cmake.path)) {
-    $cmake = $cudalabEnv.cmake.path
-}
 if (-not $cmake) {
     $cmake = Join-Path (Get-CudalabMsvcInstallPath) 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 }
@@ -87,6 +84,17 @@ if ($Clean) {
             $useFresh = $true
         }
     }
+}
+
+# --- Drop the generator variables the pixi VS package leaks ------------------
+# Activating vs2026_win-64 (pixi.toml) sets CMAKE_GENERATOR to the Visual Studio
+# generator along with CMAKE_GENERATOR_PLATFORM=x64 and a toolset. This project
+# builds with Ninja, and a leftover platform makes CMake refuse with "Generator
+# Ninja does not support platform specification". Clearing them here keeps the
+# preset's generator the only one in play; the child cmake inherits this process
+# environment.
+foreach ($leakedGeneratorVariable in 'CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_GENERATOR_TOOLSET') {
+    Remove-Item "Env:$leakedGeneratorVariable" -ErrorAction SilentlyContinue
 }
 
 # --- Configure inside the MSVC environment ----------------------------------

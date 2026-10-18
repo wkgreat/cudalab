@@ -47,5 +47,29 @@ int *randomInt(size_t n, int minValue, int maxValue) {
   return values;
 }
 
+float *randomFloat(size_t n) { return randomFloat(n, 0.0f, 1.0f); }
+
+float *randomFloat(size_t n, float minValue, int maxValue) {
+  if (minValue > static_cast<float>(maxValue)) {
+    throw std::invalid_argument(
+        "randomFloat: minValue must not be greater than maxValue");
+  }
+
+  // Same allocation convention as randomInt: the caller owns the block.
+  float *values = (float *)std::malloc(sizeof(float) * n);
+
+  // uniform_real_distribution is half-open: minValue is reachable, maxValue is
+  // not. That is the opposite of uniform_int_distribution above, where both
+  // endpoints are inclusive.
+  std::uniform_real_distribution<float> distribution(
+      minValue, static_cast<float>(maxValue));
+  std::mt19937 &engine = generator();
+  for (size_t i = 0; i < n; ++i) {
+    values[i] = distribution(engine);
+  }
+
+  return values;
+}
+
 } // namespace common
 } // namespace cudalab

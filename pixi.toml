@@ -25,17 +25,22 @@ build-release = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bui
 build = "pixi run build-release"
 clean = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cmake.ps1 -Preset ninja-debug -Clean"
 run = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-cmake.ps1 -Preset ninja-debug -Run"
-test-debug = "ctest --preset ninja-debug"
-test-release = "ctest --preset ninja-release"
-test = "ctest --preset ninja-release"
+test-debug = "ctest -V --preset ninja-debug"
+test-release = "ctest -V --preset ninja-release"
+test = "ctest -V --preset ninja-release"
 
 [target.linux-64.tasks]
 env = "pwsh -NoProfile -File scripts/sync-env.ps1"
 configure = "cmake --preset ninja-debug"
+configure-release = "cmake --preset ninja-release"
 build-debug = { cmd = "cmake --build --preset ninja-debug", depends-on = [
     "configure",
     "env",
 ] }
 build = "pixi run build-release"
-build-release = "cmake --build --preset ninja-release"
-test = "ctest --preset ninja-debug"
+build-release = { cmd = "cmake --build --preset ninja-release", depends-on = [
+    "configure-release",
+    "env",
+] }
+test-debug = "ctest -V --preset ninja-debug"
+test-release = "ctest -V --preset ninja-release"

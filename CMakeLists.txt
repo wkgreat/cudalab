@@ -119,6 +119,11 @@ find_package(CUDAToolkit REQUIRED)
 # a vcpkg dependency rather than a machine path in env.json.
 find_package(OpenCL CONFIG REQUIRED)
 
+# Provides the imported fmt::fmt target demos link when they use fmt for
+# formatting. fmt is declared in vcpkg.json like OpenCL; its config package
+# exports fmt::fmt.
+find_package(fmt CONFIG REQUIRED)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
@@ -187,6 +192,10 @@ function(cudalab_configure_target target has_cuda has_opencl)
     if(has_opencl)
         target_link_libraries(${target} PRIVATE OpenCL::OpenCL)
     endif()
+
+    # fmt is a general-purpose dependency, so every target links it; an
+    # unused link is dropped by --as-needed.
+    target_link_libraries(${target} PRIVATE fmt::fmt)
 endfunction()
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,8 @@
 // something:
 //
 //   ./build/ninja-release/demo_bitonic_sort_test "[benchmark]"
-//   ./build/ninja-release/demo_bitonic_sort_test "[benchmark]" --benchmark-samples 100
+//   ./build/ninja-release/demo_bitonic_sort_test "[benchmark]"
+//   --benchmark-samples 100
 //
 // The demo's driver (main.cpp) is deliberately not part of this target: this
 // file has no main(), Catch2::Catch2WithMain provides one.
@@ -128,25 +129,25 @@ std::vector<int> sortedReference(const std::vector<int> &input, bool asc) {
 }
 
 // Compares two arrays and reports only the first mismatch, with a handful of
-// neighbours for context. A plain `REQUIRE(actual == expected)` would print both
-// vectors in full - over a million ints in the large cases - burying the single
-// value that is actually wrong.
+// neighbours for context. A plain `REQUIRE(actual == expected)` would print
+// both vectors in full - over a million ints in the large cases - burying the
+// single value that is actually wrong.
 void requireSameValues(const std::vector<int> &actual,
                        const std::vector<int> &expected) {
   REQUIRE(actual.size() == expected.size());
 
   for (std::size_t i = 0; i < expected.size(); ++i) {
     if (actual[i] != expected[i]) {
-      FAIL("first of " << (actual.size() - i)
-                       << " mismatches at index " << i << ": expected "
-                       << expected[i] << ", got " << actual[i]
+      FAIL("first of " << (actual.size() - i) << " mismatches at index " << i
+                       << ": expected " << expected[i] << ", got " << actual[i]
                        << " (size " << expected.size() << ")");
     }
   }
 }
 
 // Runs `sort` over one generated input and compares the result with std::sort.
-void requireMatchesReference(SortFn sort, std::size_t n, bool asc, Shape shape) {
+void requireMatchesReference(SortFn sort, std::size_t n, bool asc,
+                             Shape shape) {
   std::vector<int> input = makeInput(shape, n);
   const std::vector<int> expected = sortedReference(input, asc);
 
@@ -212,7 +213,8 @@ TEST_CASE("sorting a buffer in place matches sorting into a separate one",
   requireSameValues(input, expected);
 }
 
-TEST_CASE("the sorted result stays sorted in the requested order", "[bitonic]") {
+TEST_CASE("the sorted result stays sorted in the requested order",
+          "[bitonic]") {
   // A cheap invariant check on top of the exact comparison above: catches an
   // implementation that returns the wrong order overall.
   constexpr std::size_t kN = 1025;
@@ -233,13 +235,7 @@ TEST_CASE("the sorted result stays sorted in the requested order", "[bitonic]") 
   }
 }
 
-TEST_CASE("bitonic sort performance", "[bitonic][benchmark]") {
-  // Both implementations sort the *same* size, so the two rows of Catch2's
-  // table are directly comparable instead of measuring two different problems.
-  // 2^18 is large enough for the GPU work to outweigh launch overhead, yet
-  // small enough that a Debug build still finishes quickly under ctest. For
-  // numbers that mean something, run a Release build (and let Catch2 use its
-  // default 100 samples).
+TEST_CASE("bitonic sort benchmark", "[bitonic][benchmark]") {
   constexpr std::size_t kN = std::size_t{1} << 18; // 262,144
 
   const std::vector<int> input = makeInput(Shape::Random, kN);

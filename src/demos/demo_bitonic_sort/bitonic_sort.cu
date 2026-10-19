@@ -100,10 +100,6 @@ cudaError_t cudaBitonicSortInt(int *h_vals, int *h_out, size_t n, bool asc) {
 
   int *d_vals;
   cudaMalloc(&d_vals, sizeof(int) * m);
-  // The padding has to sort to the far end and be dropped with the tail, so it
-  // follows the direction: the largest value for ascending, the smallest for
-  // descending. Padding with INT_MAX regardless sent the padding to the front
-  // of a descending result and the first n values came back wrong.
   const int pad =
       asc ? std::numeric_limits<int>::max() : std::numeric_limits<int>::min();
   fillInt32Kernel<<<numBlocks, numThreads>>>(d_vals, pad, m);

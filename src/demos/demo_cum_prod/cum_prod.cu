@@ -1,10 +1,5 @@
 #include "cum_prod.h"
-#include <__clang_cuda_builtin_vars.h>
-#include <__clang_cuda_runtime_wrapper.h>
-#include <cuda_device_runtime_api.h>
 #include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
-#include <driver_types.h>
 
 namespace cudalab {
 
@@ -29,6 +24,20 @@ __global__ void cudaCumProd3PhaseKernel1(float *d_vals, float *d_cache,
   }
 }
 
+__global__ void cudaCumProd3PhaseKernel2(float *d_cache, size_t nBlocks) {
+  for (int i = 1; i < nBlocks; ++i) {
+    d_cache[i] *= d_cache[i - 1];
+  }
+}
+
+__global__ void cudaCumProd3PhaseKernel3(float *d_cache, float *d_rets,
+                                         size_t N) {
+  unsigned int k = blockDim.x * blockIdx.x + threadIdx.x;
+  if (blockIdx.x > 0 && k < N) {
+    d_rets[k] *= d_cache[blockIdx.x - 1];
+  }
+}
+
 int cudaCumProd3Phase(float *h_vals, float *h_rets, size_t N) {
 
   size_t blockDim = BLOCKDIM;
@@ -39,9 +48,19 @@ int cudaCumProd3Phase(float *h_vals, float *h_rets, size_t N) {
   cudaMalloc(&d_vals, sizeof(float) * N);
   cudaMemcpy(d_vals, h_vals, sizeof(float) * N, cudaMemcpyHostToDevice);
   cudaMalloc(&d_cache, sizeof(float) * blockNum);
+  cudaMalloc(&d_rets, sizeof(float) * N);
   cudaCumProd3PhaseKernel1<<<blockNum, blockDim, sharedSize>>>(d_vals, d_cache,
                                                                d_rets, N);
-  // TODO
+  cudaCumProd3PhaseKernel2<<<1, 1>>>(d_cache, blockNum);
+
+  cudaCumProd3PhaseKernel3<<<blockNum, blockDim>>>(d_cache, d_rets, N);
+
+  cudaMemcpy(h_rets, d_rets, sizeof(float) * N, cudaMemcpyDeviceToHost);
+
+  cudaFree(d_vals);
+  cudaFree(d_cache);
+  cudaFree(d_rets);
+
   return 0;
 }
 

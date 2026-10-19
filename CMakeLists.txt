@@ -151,6 +151,10 @@ function(cudalab_configure_target target has_cuda has_opencl)
             # warnings.
             $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
             $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>
+            # CUDA 13's CCCL headers require the standard conforming
+            # preprocessor; the traditional one is a hard #error.
+            $<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>
             # Keep line information so a profiler can map SASS back to source.
             # Only for non-Debug builds: -G already implies line info and ptxas
             # rejects both.

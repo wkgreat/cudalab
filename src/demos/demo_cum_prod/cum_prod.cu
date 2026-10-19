@@ -1,5 +1,10 @@
 #include "cum_prod.h"
+#include <cub/cub.cuh>
+#include <cub/device/device_scan.cuh>
+#include <cuda_device_runtime_api.h>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <driver_types.h>
 
 namespace cudalab {
 
@@ -64,6 +69,42 @@ int cudaCumProd3Phase(float *h_vals, float *h_rets, size_t N) {
   return 0;
 }
 
-int cudaCumProd1Phase(float *h_vals, float *h_rets, size_t N) { return 1; }
+int cudaCumProd1Phase(float *h_vals, float *h_rets, size_t N) {
+  // TODO
+  return 1;
+}
+
+struct MultiplyOp {
+  __device__ float operator()(float a, float b) const { return a * b; }
+};
+
+int cudaCumProdByCub(float *h_vals, float *h_rets, size_t N) {
+
+  size_t temp_bytes = 0;
+  MultiplyOp mult_op;
+
+  float *d_vals, *d_rets;
+
+  cudaMalloc(&d_vals, sizeof(float) * N);
+  cudaMemcpy(d_vals, h_vals, sizeof(float) * N, cudaMemcpyHostToDevice);
+  cudaMalloc(&d_rets, sizeof(float) * N);
+
+  cub::DeviceScan::InclusiveScan(nullptr, temp_bytes, d_vals, d_rets, mult_op,
+                                 N);
+
+  void *d_temps;
+  cudaMalloc(&d_temps, temp_bytes);
+
+  cub::DeviceScan::InclusiveScan(d_temps, temp_bytes, d_vals, d_rets, mult_op,
+                                 N);
+
+  cudaMemcpy(h_rets, d_rets, sizeof(float) * N, cudaMemcpyDeviceToHost);
+
+  cudaFree(d_temps);
+  cudaFree(d_vals);
+  cudaFree(d_rets);
+
+  return 0;
+}
 
 } // namespace cudalab

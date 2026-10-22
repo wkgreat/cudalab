@@ -7,15 +7,16 @@ CUDA 实验项目。一个 demo 一个目录，每个 demo 编译成一个独立
 ### Windows
 
 1. 安装 pixi：`winget install prefix-dev.pixi`
-2. 安装 Visual Studio 2026（勾选「使用 C++ 的桌面开发」）；只有 VS 2022 也行
-3. 安装 CUDA Toolkit
-4. 克隆本仓库并进入仓库目录
-5. `pixi install`
-6. `pixi run build-debug`（首次会自动探测本机并生成 `env.json`）
-7. `pixi run test`
-8. 路径探测不准时：`pixi run env`，然后重新 `pixi run build`
+2. 安装 Visual Studio 2026（勾选「使用 C++ 的桌面开发」）；只有 VS 2022 也行 —— nvcc 需要它的 `cl.exe` 主机编译器
+3. 克隆本仓库并进入仓库目录
+4. `pixi install` —— cmake / ninja / clangd / CUDA 都由 pixi 提供，不用单独装 CUDA Toolkit
+5. `pixi run build-debug`
+6. `pixi run test`
+7. 想单独刷新 clangd 编译库：`pixi run env`（需先构建过一次）
 
-vcpkg 用系统里已有的安装；Windows 上没装时用 Visual Studio 自带的（见 `docs/setup.md`）。
+不需要任何机器配置文件：MSVC、Windows SDK 和 GPU 架构都在构建时探测。
+
+Catch2、fmt、OpenCL 也由 pixi 安装，不需要 vcpkg。
 
 ### Linux
 
@@ -26,7 +27,7 @@ vcpkg 用系统里已有的安装；Windows 上没装时用 Visual Studio 自带
 5. `pixi run test`
 6. 单独刷新 clangd 编译库：`pixi run env`（需先配置过一次）
 
-vcpkg 用系统里已有的安装（`VCPKG_ROOT` 或 PATH 上的 `vcpkg`），见 `docs/setup.md`。
+Catch2、fmt、OpenCL 也由 pixi 安装，不需要 vcpkg。
 
 ### VS Code
 

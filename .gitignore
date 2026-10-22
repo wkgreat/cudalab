@@ -28,16 +28,11 @@ profiles/
 # Tooling artifacts
 compile_commands.json
 .cache/
+__pycache__/
+*.pyc
 
 # pixi environment (pixi.lock is committed, the installed env is not)
 .pixi/
-
-# vcpkg manifest mode output
-vcpkg_installed/
-vcpkg-manifest-install.log
-
-# Leftover in-repo vcpkg checkout (the build uses the system/VS vcpkg instead)
-.vcpkg/
 
 # Local scratch files
 temp/

@@ -1,25 +1,24 @@
 {
   // Build tasks for the CUDA lab.
   //
-  // CMake is the only build system: every task below calls
-  // scripts/build-cmake.ps1 or scripts/run-demos.ps1, which configure and build
-  // with the Ninja presets from CMakePresets.json.
+  // CMake is the only build system: every task below runs a script from
+  // scripts/ through pixi, so the pinned toolchain (CMake, Ninja, CUDA, cl.exe)
+  // is active.
   //
   //   Ctrl+Shift+B            -> "CMake: build all demos (ninja-debug)"
   //   Ctrl+Shift+P > Run Task -> pick any task below
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "env: refresh env.json + clangd database",
-      "detail": "Detect this machine's paths, write env.json, regenerate compile_commands.json",
+      "label": "env: refresh clangd database",
+      "detail": "Regenerate compile_commands.json from the build tree",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/sync-env.ps1"
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/sync_env.py"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -35,14 +34,13 @@
       "label": "CMake: build all demos (ninja-debug)",
       "detail": "Configure + build every demo target under src/demos",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/build-cmake.ps1",
-        "-Preset",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/build_cmake.py",
+        "--preset",
         "ninja-debug"
       ],
       "options": {
@@ -64,14 +62,13 @@
     {
       "label": "CMake: build all demos (ninja-release)",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/build-cmake.ps1",
-        "-Preset",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/build_cmake.py",
+        "--preset",
         "ninja-release"
       ],
       "options": {
@@ -90,16 +87,15 @@
       "label": "CMake: build one demo (ninja-debug)",
       "detail": "Build a single demo target; prompts for the demo directory name",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/build-cmake.ps1",
-        "-Preset",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/build_cmake.py",
+        "--preset",
         "ninja-debug",
-        "-Demo",
+        "--demo",
         "${input:demo}"
       ],
       "options": {
@@ -118,16 +114,15 @@
       "label": "CMake: clean rebuild all demos (ninja-debug)",
       "detail": "Wipe the configure cache and rebuild everything",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/build-cmake.ps1",
-        "-Preset",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/build_cmake.py",
+        "--preset",
         "ninja-debug",
-        "-Clean"
+        "--clean"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -145,16 +140,15 @@
       "label": "CMake: build + run all demos (ninja-debug)",
       "detail": "Compile everything, then run each demo and check its exit code",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/build-cmake.ps1",
-        "-Preset",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/build_cmake.py",
+        "--preset",
         "ninja-debug",
-        "-Run"
+        "--run"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -172,14 +166,13 @@
       "label": "CMake: run all demos (ninja-debug)",
       "detail": "Run the demo executables that are already built",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/run-demos.ps1",
-        "-Preset",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/run_demos.py",
+        "--preset",
         "ninja-debug"
       ],
       "options": {
@@ -196,18 +189,17 @@
       "label": "CUDA: profile a demo (Nsight Compute)",
       "detail": "Per-kernel metrics. Needs administrator rights or GPU counter permission - see README.",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/profile.ps1",
-        "-Tool",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/profile.py",
+        "--tool",
         "compute",
-        "-Set",
+        "--set",
         "detailed",
-        "-Demo",
+        "--demo",
         "${input:demo}"
       ],
       "options": {
@@ -219,16 +211,15 @@
       "label": "CUDA: profile a demo (Nsight Systems)",
       "detail": "Timeline trace of the process, including kernel and memcpy activity",
       "type": "shell",
-      "command": "powershell",
+      "command": "pixi",
       "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/scripts/profile.ps1",
-        "-Tool",
+        "run",
+        "--",
+        "python",
+        "${workspaceFolder}/scripts/profile.py",
+        "--tool",
         "systems",
-        "-Demo",
+        "--demo",
         "${input:demo}"
       ],
       "options": {

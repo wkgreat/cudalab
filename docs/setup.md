@@ -5,20 +5,20 @@
 
 ## 0. 工具链：pixi
 
-`pixi.toml` 锁定 cmake / ninja / clangd 的版本，Linux 上还把 CUDA 和 gcc 一起装上：
+`pixi.toml` 锁定 cmake / ninja / clangd / **python** / **CUDA** 的版本，两个平台都装
+CUDA（Windows 上不再用系统安装的那份），Linux 上还有 gcc：
 
 ```bash
 pixi install
 pixi run build     # 配置 + 编译全部 demo
-pixi run test      # ctest --preset ninja-debug
-pixi run env       # 重新探测本机并刷新 env.json + clangd 数据库
+pixi run test      # ctest --preset ninja-release
+pixi run env       # 重新生成 clangd 数据库
 ```
 
-pixi 取代了旧文档里“手工装 CMake / Ninja / clangd”的步骤。Windows 上
-`pixi.toml` 用 `vs2026_win-64` 声明主机编译器，脚本探测时的选择顺序是
-**VS 2026（18.x）→ VS 2022（17.x）→ 其它**（见 §1）。它管不到的三件事仍然按
-下面的章节处理：Windows 的系统 CUDA（§6）、Catch2/OpenCL 用的 vcpkg（§12）、
-以及这些工具在 `env.json` 里的机器路径（§2）。
+pixi 取代了旧文档里“手工装 CMake / Ninja / clangd / CUDA”的步骤。Windows 上
+`pixi.toml` 用 `vs2026_win-64` 激活主机编译器（`cl.exe` + `INCLUDE`/`LIB` 直接进
+pixi 环境），脚本不再自己调 `vcvars64.bat`（见 §1）。Catch2、fmt、OpenCL 也由
+pixi 直接提供，不再需要 vcpkg（§12）。
 
 ## 1. 本机实测环境
 
@@ -26,100 +26,81 @@ pixi 取代了旧文档里“手工装 CMake / Ninja / clangd”的步骤。Wind
 | --- | --- |
 | GPU | NVIDIA GeForce RTX 5060 Ti，计算能力 **sm_120**（12.0），16 GB |
 | 驱动 | 617.42 |
-| CUDA Toolkit | **13.3**（V13.3.73），`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3` |
-| 主机编译器 | MSVC **14.51.36231**（Visual Studio Community **2026** / VS 18；pixi 依赖 `vs2026_win-64` 声明的就是它，VS 2022 是次选） |
+| CUDA Toolkit | 由 **pixi** 提供（`cuda-toolkit >=13.3,<14`，本机解析到 **13.4.1**）；系统安装的 13.2 不再使用 |
+| 主机编译器 | MSVC **14.51.36231**（Visual Studio Community **2026** / VS 18，由 pixi 的 `vs2026_win-64` 激活到环境中） |
 | CMake | 由 **pixi** 提供（`pixi.toml` 锁定版本），生成器 **Ninja** |
 | clangd | 由 **pixi** 提供（`clang-tools`） |
 | Windows SDK | 10.0.26100.0 |
-| Shell | Windows PowerShell **5.1**（本机没有 pwsh 7） |
+| Shell / 脚本运行时 | 构建与辅助脚本统一用 **pixi 的 Python**（`scripts/*.py`），不再依赖 PowerShell |
 
-这些值都不写死在配置里：工具链的**版本**由 `pixi.toml` 锁定，
-**机器路径**由 `env.json` 承载。Linux 上 pixi 连 CUDA 和 gcc 一起提供，
-`env.json` 都可以不要。
+这些值都不写死在配置里：工具链的**版本**由 `pixi.toml` 锁定，其余**全部运行时探测**
+（见 §2），仓库里没有任何机器配置文件。
 
-## 2. env.json —— 唯一含机器路径的文件
+## 2. 没有机器配置文件
 
-```json
-{
-  "_comment": "Machine-specific paths for this checkout. Regenerate with scripts/sync-env.ps1 -Refresh; everything else is derived from here. Only what pixi cannot supply lives here.",
-  "cuda":       { "root": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3" },
-  "msvc":       { "vcvars64": "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvars64.bat" },
-  "windowsSdk": { "ucrtInclude": "C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/ucrt" },
-  "vcpkg":      { "root": "C:/vcpkg" }
-}
-```
+以前仓库根目录有个 `env.json` 承载本机的 CUDA / MSVC / Windows SDK 路径，**已删除**。
+现在两样都能在运行时探测出来，另一部分由 pixi 提供：
 
-只保留 pixi 提供不了的东西：CUDA 根目录（Windows 上是系统安装）、MSVC 环境
-脚本、Windows SDK 的 UCRT 目录。`cuda.arch` 和 `cmake.path` 已删除 —— 前者改成
-CMake 的 `native` 自动探测，后者由 pixi 放进 PATH。`cuda.arch` 仍可手写，用来在
-多 GPU 机器上钉死架构。
+| 值 | 来源 |
+| --- | --- |
+| cmake / ninja / clangd / python / CUDA（两平台） | `pixi.toml` 锁定，`pixi install` 装好 |
+| GPU 架构 | CMake 的 `native` 自动探测 |
+| MSVC 工具链（`cl.exe`、`INCLUDE`、`LIB`） | pixi 的 `vs2026_win-64` 激活脚本写进环境，构建脚本直接用 PATH 上的 `cl.exe` |
+| Windows SDK UCRT 目录 | 注册表 `Microsoft SDKs\Windows\v10.0\InstallationFolder` 下最新版本 |
+| CUDA 版本校验 | `scripts/common.py` 从 `pixi.toml` 的 `cuda-toolkit` 约束读最低版本，实际 nvcc 低于它直接报错 |
 
-| 谁在读 | 读什么 | 用在哪儿 |
-| --- | --- | --- |
-| `CMakeLists.txt` | `cuda.root` | `CUDAToolkit_ROOT` |
-| `CMakeLists.txt` | `cuda.arch`（可选） | 覆盖 `CMAKE_CUDA_ARCHITECTURES`，缺省 `native` |
-| `CMakeLists.txt` | `vcpkg.root` | `CMAKE_TOOLCHAIN_FILE`（vcpkg manifest 模式，提供 Catch2） |
-| `scripts/build-cmake.ps1` | 全部 | MSVC 环境、生成 clangd 编译库 |
-| `scripts/sync-env.ps1` | 全部 | 打印 + 生成 clangd 编译库 |
+`scripts/sync_env.py` 现在只做一件事：**重新渲染 clangd 的 `compile_commands.json`**。
+`compile_commands.json` 是生成物，已被 git 忽略。
 
-`env.json` **需要提交**（它就是那个按机器编辑的文件）；`compile_commands.json` 是生成物，已被 git 忽略。
+### 为什么不把机器路径写进配置文件
 
-### 为什么不让 `.vscode/` 和 `.clangd` 直接引用 env.json
-
-两条路都试过，都不成立：
-
-- **`.clangd` 引用不了。** 它是 YAML，没有任何变量替换或 include 机制。
+- **`.clangd` 引用不了变量。** 它是 YAML，没有任何变量替换或 include 机制。
 - **VS Code 只能算半个。** `${env:VAR}` 取的是 **VS Code 进程启动瞬间**的环境变量，
   意味着新机器必须先设系统环境变量再启动 VS Code，改一次还要重启一次，不可靠。
 
 所以走的是**渲染**路线：**机器路径只进"生成物"，不进"配置文件"**。
 
 - `.clangd` **已删除** —— 它原本要写 CUDA 路径、SDK 版本、GPU 架构，现在这些由
-  `scripts/common.ps1` 从 `env.json` 和 `nvidia-smi` 渲染进 `compile_commands.json`；
+  `scripts/common.py` 从探测到的工具链和 `nvidia-smi` 渲染进 `compile_commands.json`；
 - `.vscode/c_cpp_properties.json` **已删除**（原本写死 cl.exe 和 CUDA include，
   而且 cpptools 的 IntelliSense 本来就关着）；
 - `.vscode/settings.json` 里的 `cmake.cmakePath`、`C_Cpp.default.compilerPath`、
   `C_Cpp.default.includePath` **已删除** —— 构建任务调用脚本，脚本自己找 CMake；
 - `CMakePresets.json` 里的 `CMAKE_CUDA_ARCHITECTURES` **已改为 CMake 的 `native`
-  自动探测**（`env.json` 里手写 `cuda.arch` 仍可覆盖）。
+  自动探测**（命令行 `-DCMAKE_CUDA_ARCHITECTURES=...` 仍可覆盖）。
 
-净结果：`.vscode/` 里没有任何机器路径，`.clangd` 不存在，`CMakePresets.json` 里也没有。
+净结果：仓库里没有任何机器路径或机器配置文件，`.clangd` 不存在。
 
 ## 3. 换一台机器
 
 **什么都不用改。**
 
-```powershell
-.\scripts\sync-env.ps1 -Refresh     # 探测本机并重写 env.json
+```bash
+pixi install       # 装 cmake / ninja / clangd / CUDA
+pixi run build     # 配置 + 编译
 ```
 
-或者更省事：**直接构建一次**。`env.json` 不存在时会自动探测生成：
+MSVC、Windows SDK、GPU 架构都在构建时现探测，没有文件要刷新。只改了探测相关的东西
+（或没重新构建但想更新 IntelliSense）时：
 
-| 值 | 探测方式 |
-| --- | --- |
-| `cuda.root` | `CUDA_PATH`，否则从 PATH 上的 `nvcc` 反推 |
-| `msvc.vcvars64` | vswhere 找到的 VS **2022**（17.x）安装目录；机器上没有 17.x 才退回最新版 |
-| `windowsSdk.ucrtInclude` | `Windows Kits\10\Include\<最新版本>\ucrt` |
+```bash
+python scripts/sync_env.py         # 只重新生成 clangd 数据库（需在 pixi 环境里）
+```
 
-工具链本身不用探测：`pixi install` 按 `pixi.toml` 装好 cmake / ninja / clangd
-（Linux 上还有 CUDA、gcc），PATH 上就是它们。GPU 架构也不用探测，CMake 的
-`native` 直接问当前 GPU。
-
-探测不出来的（机器上装了多个 CUDA / 多个 Windows SDK、想固定某个版本）才需要手工改。
-
-`vcpkg.root` 一般不用写：CMake 会依次找 `VCPKG_ROOT`、PATH 上的 `vcpkg`、
-Windows 的 `C:/vcpkg` 和 Visual Studio 自带的 vcpkg（详见 §12）。机器上有多个
-vcpkg 安装、想固定其中一个时才需要写进 `env.json`。
+Catch2 / fmt / OpenCL 同样来自 pixi，`pixi install` 之后就能直接构建（§12）。
 
 ## 4. 构建脚本与执行顺序
 
-`scripts/build-cmake.ps1` 的顺序固定为 **配置 → 生成 clangd 编译库 → 编译**。
+`scripts/build_cmake.py` 的顺序固定为 **配置 → 生成 clangd 编译库 → 编译**。
 中间那步往前放是有意的：代码编译不过的时候，恰恰最需要 IntelliSense。
 
-脚本会先调用 `env.json` 里的 `vcvars64.bat`，因为 Ninja 需要 `cl.exe` 在 PATH 上。
+脚本本身是 Python，由 `pixi.toml` 里的 `python` 提供运行时，`pixi run ...` 直接可用。
 
-CMake 定位顺序：**PATH → VS 自带**。在 pixi 环境里 PATH 上的就是 `pixi.toml` 锁定的
-那个 CMake，所以版本是确定的。
+脚本不再调用 `vcvars64.bat`：pixi 的 `vs2026_win-64` 激活时已经把 `cl.exe`、`INCLUDE`、
+`LIB` 放进环境，Ninja 和 nvcc 直接就能用。所以脚本必须在 pixi 环境里跑（`pixi run ...`
+或 `pixi shell`），不在 pixi 里会明确报错说找不到 `cl.exe` / `cmake`。
+
+CMake 只从 **PATH** 找，也就是 `pixi.toml` 锁定的那个，不再回退到 VS 自带的副本。
 
 如果提示“未对文件进行数字签名”，在命令前加 `-ExecutionPolicy Bypass`
 （VS Code 里的任务已经带了该参数）。
@@ -139,8 +120,8 @@ clangd 只能拿邻近源文件的命令顶替。这些坑原先靠一个 `.clan
 
 ```
 CMake 的 compile_commands.json（build/<preset>/，权威）
-        + env.json（CUDA 路径、SDK 路径）+ nvidia-smi（架构，现探测）
-                ↓  scripts/common.ps1 / New-CudalabClangDatabase
+        + PATH 上的 nvcc（CUDA 路径）+ 探测到的 Windows SDK 路径 + nvidia-smi（架构）
+                ↓  scripts/common.py / write_clang_database
 仓库根的 compile_commands.json（clang 方言，源码 + 头文件全覆盖）
 ```
 
@@ -161,15 +142,15 @@ clangd 会自动在源文件的上级目录找到根目录那份，**不需要�
 
 ### 验证
 
-```powershell
-clangd --check=src\demos\demo_add_one\add_one.cu
+```bash
+clangd --check=src/demos/demo_add_one/add_one.cu
 ```
 
 `clangd` 由 pixi 提供（`pixi.toml` 里的 `clang-tools`），所以先 `pixi shell` 或
 `pixi run` 一下，PATH 上就是它。期望输出 `All checks completed, 0 errors`。
 
-编译库由构建脚本自动刷新；只改了 `env.json` 又不想重新构建时，跑
-`scripts/sync-env.ps1` 或 VS Code 里的 **env: refresh env.json + clangd database** 任务。
+编译库由构建脚本自动刷新；改了探测相关的东西又不想重新构建时，跑
+`pixi run env`（即 `scripts/sync_env.py`）或 VS Code 里的 **env: refresh clangd database** 任务。
 
 改了 `.vscode/settings.json` 里的 clangd 开关后需要
 `Ctrl+Shift+P` → **Developer: Reload Window**。
@@ -177,7 +158,10 @@ clangd --check=src\demos\demo_add_one\add_one.cu
 ## 6. 为什么还离不开 MSVC
 
 Windows 上 **nvcc 必须有一个主机编译器，只能用 `cl.exe`**，没有替代品。
-Ninja 生成器又要求 `cl.exe` 在 PATH 上，所以构建脚本会先调用 `vcvars64.bat`。
+这份编译器由 pixi 的 `vs2026_win-64` 包激活：激活时把 `cl.exe` 放进 PATH、
+`INCLUDE`/`LIB` 指向 MSVC 与 Windows SDK，构建脚本直接用，不需要 `vcvars64.bat`。
+（这个包本身链接的是机器上已装的 VS 2026，所以机器仍需装一次 VS 的 C++ 工作负载；
+它解决的是“不用手工配环境变量”，不是“不用装 VS”。）
 这不影响“只用 CMake 构建”：构建系统是 CMake、生成器是 Ninja，
 `cl.exe` 只是 CUDA 工具链的主机编译器；项目里没有 Visual Studio 生成器
 （MSBuild / `.slnx`），也没有直接调 nvcc 的构建路径。
@@ -197,14 +181,15 @@ Windows 上**不能单步调试 kernel**：CUDA-GDB 只有 Linux 版，
 
 ## 8. 性能分析
 
-```powershell
-.\scripts\profile.ps1                          # Nsight Compute，默认第一个 demo
-.\scripts\profile.ps1 -Demo demo_add_one -Set full
-.\scripts\profile.ps1 -Tool systems            # Nsight Systems 时间线
+```bash
+python scripts/profile.py                              # Nsight Compute，默认第一个 demo
+python scripts/profile.py --demo demo_add_one --set full
+python scripts/profile.py --tool systems               # Nsight Systems 时间线
 ```
 
-脚本会自动到 `C:\Program Files\NVIDIA Corporation\Nsight ...` 下找 `ncu.exe` / `nsys.exe`
-（它们不在 PATH 上；这一步是动态扫描，所以没写进 `env.json`）。
+脚本会先找 PATH 上的 `ncu` / `nsys`，再自动扫
+`C:\Program Files\NVIDIA Corporation\Nsight ...`（Windows）或 `/opt/nvidia`（Linux）
+（这一步是动态扫描，所以不写进任何配置）。
 
 实测注意事项：
 
@@ -217,17 +202,18 @@ Windows 上**不能单步调试 kernel**：CUDA-GDB 只有 Linux 版，
 ## 9. 常见问题
 
 - **clangd 报一堆 `crtdbg.h` / `std::printf` 找不到**：`compile_commands.json` 过期了，
-  跑一次 `.\scripts\build-cmake.ps1` 或 `.\scripts\sync-env.ps1`。
+  跑一次 `pixi run build` 或 `pixi run env`。
 - **clangd 在 `.cu` 里报 `blockIdx` 未声明**：同上，编译库里该文件没走 CUDA 分支，
-  检查 `env.json` 的 `cuda.root`，以及 `nvidia-smi` 能不能报出架构。
-- **改了 `env.json` 的 `cuda.arch` 但构建没反应**：`CMAKE_CUDA_ARCHITECTURES` 是 cache
-  变量，改架构要用 `.\scripts\build-cmake.ps1 -Clean` 重建（或删掉 `build/<preset>`）。
-  默认的 `native` 不需要手工改。
+  检查 pixi 环境里的 nvcc（`pixi run` 后 `where nvcc`），以及 `nvidia-smi` 能不能报出架构。
+- **改了 `CMAKE_CUDA_ARCHITECTURES` 但构建没反应**：它是 cache 变量，改架构要用
+  `pixi run clean` 重建（或删掉 `build/<preset>`）。默认的 `native`
+  不需要手工改。
 - **VS Code 里 clangd 用的不是 pixi 那份**：clangd 扩展默认用它自己下载的二进制。
   想统一，把 `clangd.path` 指到 pixi 环境里的 clangd（`pixi shell` 后 `where clangd`）。
-- **`-Clean` 删不掉 build 目录**：编辑器/调试器会占用该目录，脚本会自动回退到
+- **`--clean` 删不掉 build 目录**：编辑器/调试器会占用该目录，脚本会自动回退到
   `cmake --fresh`（清配置缓存并全量重编），效果一样。
-- **任务里用 `powershell` 而不是 `pwsh`**：本机没装 PowerShell 7。
+- **找不到 `python` / `cmake` / `cl.exe`**：脚本要在 pixi 环境里跑，
+  用 `pixi run ...`，或者先 `pixi shell` 再跑 `python scripts/...`。
 - **MSVC 报 `warning C4068: unknown pragma`**：头文件里写了 `#pragma one`，
   应为 `#pragma once`。
 
@@ -240,9 +226,8 @@ Windows 上**不能单步调试 kernel**：CUDA-GDB 只有 Linux 版，
 | `demo_bitonic_sort` | ✅ 已能编译链接运行（实现进行中） |
 | `randomInt` 行为验证（`/W4` + 9 项断言） | ✅ 范围、端点包含、可复现、调用推进、`n == 0`、退化区间、非法区间抛异常 全部通过 |
 | `clangd --check` 全部 8 个条目 | ✅ 8/8 `0 errors`，且**不使用 `.clangd`** |
-| `env.json` 驱动架构（写成 86 后干净配置） | ✅ 提示与 `CMakeCache.txt` 均为 86，恢复后为 120 |
-| **模拟新机器**：删掉 `env.json` + 编译库 + build 目录后构建 | ✅ 一条命令完成探测、重建、生成编译库、`PASS` |
-| `cudalab_tests`（vcpkg 装的 Catch2 3.15.3，`ctest --preset ninja-debug`） | ✅ 8/8 通过（`randomInt` 6 项 + `perf::Clock` 2 项） |
+| **模拟新机器**：删掉编译库 + build 目录后构建 | ✅ 一条命令完成探测、重建、生成编译库、`PASS` |
+| `cudalab_tests`（pixi 装的 Catch2，`ctest --preset ninja-debug`） | ✅ 8/8 通过（`randomInt` 6 项 + `perf::Clock` 2 项） |
 | `demo_bitonic_sort_test`（CPU/CUDA、升/降序、2 的幂与非 2 的幂、5 种输入形态，对比 `std::sort`） | ✅ 5 个 test case、4712 条断言全过（`ctest` 合计 13/13） |
 
 ## 11. 一个必须记住的 CMake 坑
@@ -256,55 +241,35 @@ project(cudalab ... LANGUAGES CXX CUDA)
 
 原因：启用 CUDA 语言时 CMake 会自己往这个 cache 变量里塞一个默认值，
 之后再 `if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)` 就永远不成立，
-会静默按错误架构编译 —— 实测踩过：`env.json` 写 86，cache 里却是 75。
+会静默按错误架构编译 —— 实测踩过：写 86，cache 里却是 75。
 
 现在的默认值是 **`native`**（CMake 3.24+）：CMake 在配置阶段直接问当前 GPU，
-所以不用再手工维护架构。`env.json` 里手写 `cuda.arch` 依然能覆盖它。
+所以不用再手工维护架构。命令行 `-DCMAKE_CUDA_ARCHITECTURES=...` 依然能覆盖它。
 
 放在 `project()` 之前是安全的：设置 cache 变量不会覆盖已存在的值，
 所以命令行 `-DCMAKE_CUDA_ARCHITECTURES=...` 仍然优先。
 
-## 12. vcpkg 与 Catch2 单元测试
+## 12. 依赖与 Catch2 单元测试
 
-依赖由 vcpkg 以 **manifest 模式**管理，清单是仓库根目录的 `vcpkg.json`：
+Catch2、fmt、OpenCL 全部由 pixi 提供，写在 `pixi.toml` 的 `[dependencies]` 里：
 
-```json
-{
-  "name": "cudalab",
-  "version": "1.0.0",
-  "dependencies": [ "catch2", "opencl", "fmt" ],
-  "builtin-baseline": "e12aaf7336cc1e348c43a1244f348451b534c0a9"
-}
-```
+| 包 | 用途 |
+| --- | --- |
+| `catch2`（钉在 3.15.x） | 单元测试框架（`Catch2::Catch2WithMain`） |
+| `fmt` | 格式化（`fmt::fmt`） |
+| `opencl-headers` + `khronos-opencl-icd-loader`（Linux 用 `ocl-icd`） | OpenCL 头文件与 ICD loader（`OpenCL::OpenCL`） |
 
-`builtin-baseline` 钉在 vcpkg 仓库的一个 commit 上，换机器、换时间都装到同一个
-catch2 版本（本机实测 **3.15.3**）。
+> Catch2 3.16.1 的 `catch_discover_tests` 会把 `EXTRA_ARGS` 当成单个参数传给测试，
+> 结果为 `Unrecognised token: --benchmark-samples;20;...`；这里钉到 3.15.3。
 
-### vcpkg 从哪来
+pixi 把这些包装进当前环境（`CONDA_PREFIX`），`CMakeLists.txt` 在 `project()` 之前
+把 `CONDA_PREFIX`（Windows 还有 `CONDA_PREFIX/Library`）加入 `CMAKE_PREFIX_PATH`，
+因此 `find_package(... CONFIG REQUIRED)` 直接命中，不需要 `CMAKE_TOOLCHAIN_FILE`，
+也不需要 vcpkg。
 
-vcpkg **程序本身不由 pixi 管理**，用的是机器上已有的安装。`CMakeLists.txt` 在
-`project()` **之前**按下面的顺序，找第一个带 `scripts/buildsystems/vcpkg.cmake`
-的目录：
-
-1. `env.json` 里的 `vcpkg.root`（显式覆盖，可选）
-2. 环境变量 `VCPKG_ROOT`（vcpkg 自己的约定）
-3. PATH 上的 `vcpkg`（取可执行文件所在目录，符号链接会先解析）
-4. Windows：`C:/vcpkg`
-5. Windows：Visual Studio 自带的 `VC/vcpkg`（用 vswhere 定位）
-
-Windows 上通常不用单独装：VS 的「使用 C++ 的桌面开发」工作负载自带 vcpkg，
-`VCPKG_ROOT` 一般也已经指向它。Linux 上装好 vcpkg 后设置 `VCPKG_ROOT`，或者让
-`vcpkg` 出现在 PATH 上即可。
-
-选定后设置 `CMAKE_TOOLCHAIN_FILE`，配置阶段 vcpkg 就会自动读取 `vcpkg.json`、
-把 catch2/fmt/opencl 装到 `build/<preset>/vcpkg_installed/`（该目录已被 git 忽略）。
-命令行显式传 `-DCMAKE_TOOLCHAIN_FILE=...` 仍然优先；一处都找不到就**跳过 vcpkg**，
-项目照常构建，配置末尾给一条 warning，单元测试关闭。
-
-> **坑**：CMake 只在 build tree **第一次** configure 时读 `CMAKE_TOOLCHAIN_FILE`。
-> 已有的 `build/<preset>` 如果还是旧配置（例如指向已废弃的仓库内 `.vcpkg/`），
-> 不会自动换 vcpkg，提示会是 “Catch2 not found”。`scripts/build-cmake.ps1`
-> 检测到 cache 指向 `.vcpkg/` 时会自动 `cmake --fresh` 重配；其它情况删掉
+> **坑**：`CMAKE_PREFIX_PATH` 只在当前环境里有效。已有的 `build/<preset>` 如果是
+> 在 vcpkg 时代配置的，cache 里可能还留着 `CMAKE_TOOLCHAIN_FILE=...vcpkg...`；
+> `scripts/build_cmake.py` 检测到会自动 `cmake --fresh` 重配。其它情况删掉
 > `build/<preset>` 重新配置即可 —— 构建目录本来就是可再生产物。
 
 ### 测试怎么组织
@@ -338,7 +303,7 @@ Windows 上通常不用单独装：VS 的「使用 C++ 的桌面开发」工作�
 >    都依赖它 —— 因为 `ctest` 跑的是全部测试二进制，而 IDE 只编译「当前选中的那个」；
 >    这样 `cmake --build --target <任意 demo>` 都会把所有测试二进制一起编出来。
 
-```powershell
+```bash
 cmake --preset ninja-debug
 cmake --build --preset ninja-debug --target demo_bitonic_sort_test
 ctest --preset ninja-debug

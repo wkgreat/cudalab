@@ -1,141 +1,31 @@
 cmake_minimum_required(VERSION 3.24)
 
 # ---------------------------------------------------------------------------
-# env.json - the remaining machine-specific paths
+# toolchain locations - nothing is read from a config file
 #
-# It holds only what pixi cannot supply: the CUDA toolkit root, the MSVC
-# environment script and the Windows SDK UCRT include directory (see pixi.toml -
-# cmake, ninja, clangd and, on Linux, the CUDA toolkit all come from pixi).
-# scripts/sync-env.ps1 writes it from detection. On Linux nothing is needed at
-# all: nvcc and g++ are on PATH inside the pixi environment.
+# Everything the build needs comes from the environment: pixi supplies CMake,
+# Ninja, clangd and the CUDA toolkit (nvcc on PATH) on both platforms, and on
+# Windows the MSVC environment is set up before CMake runs. The GPU's compute
+# capability defaults to CMake's own "native" (CMake 3.24+), so it follows the
+# GPU that is actually present; -DCMAKE_CUDA_ARCHITECTURES=... overrides it.
 #
-# The GPU's compute capability is no longer stored here: the architecture
-# defaults to CMake's own "native" (CMake 3.24+), so the value follows the GPU
-# that is actually present. An explicit cuda.arch in env.json still wins, for a
-# machine with several GPUs or a cross build.
-#
-# This runs before project() on purpose: see the note on the cache entry below.
+# The architecture must be set before project(): see the note on the cache entry
+# below.
 # ---------------------------------------------------------------------------
 set(CUDALAB_CUDA_ARCH "native")
-set(CUDALAB_CUDA_ROOT "")
-set(CUDALAB_ENV_FILE "${CMAKE_CURRENT_SOURCE_DIR}/env.json")
 
-if(EXISTS "${CUDALAB_ENV_FILE}")
-    file(READ "${CUDALAB_ENV_FILE}" cudalab_env_json)
-
-    # Optional: pin the architecture instead of letting CMake detect it.
-    string(JSON cudalab_arch_value ERROR_VARIABLE cudalab_arch_error
-        GET "${cudalab_env_json}" cuda arch)
-    if(NOT cudalab_arch_error AND cudalab_arch_value)
-        set(CUDALAB_CUDA_ARCH "${cudalab_arch_value}")
-    endif()
-
-    string(JSON cudalab_root_value ERROR_VARIABLE cudalab_root_error
-        GET "${cudalab_env_json}" cuda root)
-    if(NOT cudalab_root_error AND cudalab_root_value AND EXISTS "${cudalab_root_value}")
-        set(CUDALAB_CUDA_ROOT "${cudalab_root_value}")
-    endif()
-endif()
-
-# vcpkg - the package manager behind vcpkg.json, which supplies Catch2, fmt and
-# OpenCL. The vcpkg program is not managed by pixi: these are the system's own
-# installations, tried in order until one has the CMake toolchain file:
-#
-#   1. vcpkg.root in env.json (explicit, machine-specific override)
-#   2. the VCPKG_ROOT environment variable (vcpkg's own convention)
-#   3. a vcpkg executable on PATH
-#   4. on Windows, C:/vcpkg
-#   5. on Windows, the copy bundled with Visual Studio
-#
-# Pointing CMake at the toolchain before project() puts vcpkg into manifest
-# mode: it reads vcpkg.json and installs the declared ports into
-# <build>/vcpkg_installed. A -DCMAKE_TOOLCHAIN_FILE=... on the command line
-# still wins, and a missing vcpkg installation just builds without it.
-set(CUDALAB_VCPKG_ROOT "")
-set(cudalab_vcpkg_candidates "")
-
-if(EXISTS "${CUDALAB_ENV_FILE}")
-    string(JSON cudalab_vcpkg_root_value ERROR_VARIABLE cudalab_vcpkg_root_error
-        GET "${cudalab_env_json}" vcpkg root)
-    if(NOT cudalab_vcpkg_root_error AND cudalab_vcpkg_root_value)
-        list(APPEND cudalab_vcpkg_candidates "${cudalab_vcpkg_root_value}")
-    endif()
-endif()
-
-if(DEFINED ENV{VCPKG_ROOT} AND "$ENV{VCPKG_ROOT}")
-    list(APPEND cudalab_vcpkg_candidates "$ENV{VCPKG_ROOT}")
-endif()
-
-find_program(CUDALAB_VCPKG_EXECUTABLE NAMES vcpkg)
-if(CUDALAB_VCPKG_EXECUTABLE)
-    # Resolve symlinks so /usr/local/bin/vcpkg still yields the real root.
-    file(REAL_PATH "${CUDALAB_VCPKG_EXECUTABLE}" cudalab_vcpkg_exe_real)
-    get_filename_component(cudalab_vcpkg_from_path "${cudalab_vcpkg_exe_real}" DIRECTORY)
-    list(APPEND cudalab_vcpkg_candidates "${cudalab_vcpkg_from_path}")
-endif()
-
-if(WIN32)
-    list(APPEND cudalab_vcpkg_candidates "C:/vcpkg")
-
-    # Visual Studio ships a vcpkg bundle; vswhere is the supported way to find
-    # the installation that has the C++ toolset.
-    find_program(CUDALAB_VSWHERE_EXECUTABLE NAMES vswhere.exe
-        HINTS "C:/Program Files (x86)/Microsoft Visual Studio/Installer"
-              "C:/Program Files/Microsoft Visual Studio/Installer")
-    if(CUDALAB_VSWHERE_EXECUTABLE)
-        execute_process(
-            COMMAND "${CUDALAB_VSWHERE_EXECUTABLE}" -latest -products *
-                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64
-                -property installationPath
-            OUTPUT_VARIABLE cudalab_vs_path
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET)
-        if(cudalab_vs_path)
-            file(TO_CMAKE_PATH "${cudalab_vs_path}" cudalab_vs_path)
-            list(APPEND cudalab_vcpkg_candidates "${cudalab_vs_path}/VC/vcpkg")
-        endif()
-    endif()
-endif()
-
-foreach(cudalab_vcpkg_candidate IN LISTS cudalab_vcpkg_candidates)
-    if(NOT CUDALAB_VCPKG_ROOT AND
-       EXISTS "${cudalab_vcpkg_candidate}/scripts/buildsystems/vcpkg.cmake")
-        set(CUDALAB_VCPKG_ROOT "${cudalab_vcpkg_candidate}")
-    endif()
-endforeach()
-
-# Build trees configured while vcpkg lived in the repository's .vcpkg/ keep that
-# toolchain in their cache; replace it so they follow the detected installation.
-set(cudalab_vcpkg_stale FALSE)
-if(CMAKE_TOOLCHAIN_FILE MATCHES "[\\\\/]\\.vcpkg[\\\\/]")
-    set(cudalab_vcpkg_stale TRUE)
-endif()
-
-if(CUDALAB_VCPKG_ROOT AND (NOT CMAKE_TOOLCHAIN_FILE OR cudalab_vcpkg_stale))
-    set(CMAKE_TOOLCHAIN_FILE
-        "${CUDALAB_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-        CACHE FILEPATH "vcpkg toolchain file" FORCE)
-    message(STATUS "cudalab: vcpkg -> ${CUDALAB_VCPKG_ROOT}")
-elseif(NOT CUDALAB_VCPKG_ROOT)
-    message(STATUS "cudalab: no vcpkg installation found (set VCPKG_ROOT, put vcpkg on PATH, or install Visual Studio's vcpkg); building without vcpkg")
-endif()
-
-# The CUDA compiler search only ever looks on PATH, but a toolkit installed
-# under /usr/local/cuda keeps nvcc in a bin/ directory that is frequently not on
-# it. env.json names the root, so point CMake at the nvcc inside it. Like the
-# architecture below this must happen before project(), and a command-line
-# -DCMAKE_CUDA_COMPILER=... still wins because setting a cache entry does not
-# overwrite an existing one.
-if(CUDALAB_CUDA_ROOT AND NOT DEFINED CMAKE_CUDA_COMPILER)
+# Catch2, fmt and OpenCL come from the pixi environment. CMake does not search a
+# conda prefix on its own, so point it at the active environment's prefix.
+if(DEFINED ENV{CONDA_PREFIX} AND "$ENV{CONDA_PREFIX}")
+    list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
     if(WIN32)
-        set(cudalab_nvcc "${CUDALAB_CUDA_ROOT}/bin/nvcc.exe")
-    else()
-        set(cudalab_nvcc "${CUDALAB_CUDA_ROOT}/bin/nvcc")
-    endif()
-    if(EXISTS "${cudalab_nvcc}")
-        set(CMAKE_CUDA_COMPILER "${cudalab_nvcc}" CACHE FILEPATH "CUDA compiler")
+        list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}/Library")
     endif()
 endif()
+
+# The CUDA compiler is found on PATH - inside a pixi environment that is the
+# toolkit pixi.toml pins, so no path needs configuring. A command-line
+# -DCMAKE_CUDA_COMPILER=... still wins.
 
 # This has to be set BEFORE project(). Enabling the CUDA language installs its
 # own default for this cache entry, so a later `if(NOT DEFINED ...)` never fires
@@ -149,29 +39,19 @@ project(cudalab
     DESCRIPTION "CUDA lab - one executable target per demo"
     LANGUAGES CXX CUDA)
 
-if(CUDALAB_CUDA_ROOT)
-    set(CUDAToolkit_ROOT "${CUDALAB_CUDA_ROOT}")
-    message(STATUS "cudalab: env.json -> CUDA arch ${CUDALAB_CUDA_ARCH}, toolkit ${CUDALAB_CUDA_ROOT}")
-else()
-    message(STATUS "cudalab: env.json missing or incomplete, using CUDA arch ${CUDALAB_CUDA_ARCH} (run scripts/sync-env.ps1)")
-endif()
+message(STATUS "cudalab: CUDA toolkit from PATH (pixi), arch ${CUDALAB_CUDA_ARCH}")
 
 # Provides the imported CUDA::cudart target used below. The CUDA language
 # support alone does not define it.
 find_package(CUDAToolkit REQUIRED)
 
 # Provides the imported OpenCL::OpenCL target used by demos that ship a .cl
-# kernel. OpenCL is declared in vcpkg.json; that port builds the Khronos
-# OpenCL SDK (headers + ICD loader) and its config package exposes
-# OpenCL::OpenCL, which transitively carries the CL/ header include path. The
-# CONFIG form is the package's documented lookup - CUDALAB_CUDA_ROOT's nvcc
-# logic has already been resolved above, and unlike the CUDA toolkit OpenCL is
-# a vcpkg dependency rather than a machine path in env.json.
-find_package(OpenCL CONFIG REQUIRED)
+# kernel. Headers + ICD loader come from the pixi environment; the FindOpenCL
+# module locates them through CMAKE_PREFIX_PATH and defines OpenCL::OpenCL.
+find_package(OpenCL REQUIRED)
 
 # Provides the imported fmt::fmt target demos link when they use fmt for
-# formatting. fmt is declared in vcpkg.json like OpenCL; its config package
-# exports fmt::fmt.
+# formatting. fmt comes from the pixi environment like OpenCL.
 find_package(fmt CONFIG REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -290,7 +170,7 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# CTest and Catch2 (Catch2 is installed by vcpkg from vcpkg.json)
+# CTest and Catch2 (Catch2 comes from the pixi environment)
 #
 #   tests/*.cpp                 ->  target cudalab_tests
 #   src/demos/<demo>/test*.cpp  ->  target <demo>_test
@@ -304,7 +184,7 @@ endif()
 #
 # Catch2 has to be located here, before the demo loop: the loop builds a test
 # target for every demo that ships a test source, and each of those links it.
-# A checkout without a vcpkg root keeps working, the tests simply stay off.
+# A checkout without Catch2 keeps working, the tests simply stay off.
 # ---------------------------------------------------------------------------
 include(CTest)
 
@@ -320,12 +200,10 @@ if(CUDALAB_BUILD_TESTS AND BUILD_TESTING)
         message(STATUS "cudalab: Catch2 ${Catch2_VERSION} found -> unit tests enabled")
     else()
         message(WARNING
-            "cudalab: Catch2 not found - unit tests disabled. No usable vcpkg "
-            "installation was found (set VCPKG_ROOT, put vcpkg on PATH, or "
-            "install the vcpkg component in Visual Studio), or this build tree "
-            "was first configured before vcpkg was added: CMake reads "
-            "CMAKE_TOOLCHAIN_FILE only on a build tree's first configure, so "
-            "delete ${CMAKE_BINARY_DIR} and configure again.")
+            "cudalab: Catch2 not found - unit tests disabled. Run `pixi install` "
+            "so the pixi environment provides Catch2, or this build tree was "
+            "configured before the dependency was added: delete "
+            "${CMAKE_BINARY_DIR} and configure again.")
     endif()
 elseif(NOT BUILD_TESTING)
     message(STATUS "cudalab: BUILD_TESTING=OFF, unit tests disabled")

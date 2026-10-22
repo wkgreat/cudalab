@@ -270,11 +270,14 @@ function Get-CudalabEnv {
     if (-not $Refresh -and (Test-Path $path)) {
         try {
             $loaded = Get-Content $path -Raw | ConvertFrom-Json
-            if ($loaded.cuda.root -and
-                $loaded.msvc.vcvars64 -and $loaded.windowsSdk.ucrtInclude) {
+            # Paths from another machine are worse than missing ones: they parse
+            # fine but point nowhere, so validate them too.
+            if ($loaded.cuda.root -and (Test-Path $loaded.cuda.root) -and
+                $loaded.msvc.vcvars64 -and (Test-Path $loaded.msvc.vcvars64) -and
+                $loaded.windowsSdk.ucrtInclude -and (Test-Path $loaded.windowsSdk.ucrtInclude)) {
                 return $loaded
             }
-            Write-Host '==> env.json is incomplete; detecting again' -ForegroundColor Yellow
+            Write-Host '==> env.json is incomplete or points at paths that do not exist; detecting again' -ForegroundColor Yellow
         }
         catch {
             Write-Host "==> env.json is unreadable ($($_.Exception.Message)); detecting again" -ForegroundColor Yellow

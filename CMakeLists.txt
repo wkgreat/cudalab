@@ -37,37 +37,87 @@ if(EXISTS "${CUDALAB_ENV_FILE}")
     endif()
 endif()
 
-# vcpkg - the package manager behind vcpkg.json, which supplies Catch2 and
-# OpenCL. Looked up in three places, in order: an explicit vcpkg.root in
-# env.json (machine-specific), the .vcpkg/ checkout pixi manages (pixi run
-# vcpkg), and finally the VCPKG_ROOT environment variable that vcpkg itself
-# defines. Pointing CMake at the toolchain before project() puts vcpkg into
-# manifest mode: it reads vcpkg.json and installs the declared ports into
+# vcpkg - the package manager behind vcpkg.json, which supplies Catch2, fmt and
+# OpenCL. The vcpkg program is not managed by pixi: these are the system's own
+# installations, tried in order until one has the CMake toolchain file:
+#
+#   1. vcpkg.root in env.json (explicit, machine-specific override)
+#   2. the VCPKG_ROOT environment variable (vcpkg's own convention)
+#   3. a vcpkg executable on PATH
+#   4. on Windows, C:/vcpkg
+#   5. on Windows, the copy bundled with Visual Studio
+#
+# Pointing CMake at the toolchain before project() puts vcpkg into manifest
+# mode: it reads vcpkg.json and installs the declared ports into
 # <build>/vcpkg_installed. A -DCMAKE_TOOLCHAIN_FILE=... on the command line
-# still wins, and a missing vcpkg root just builds without it.
+# still wins, and a missing vcpkg installation just builds without it.
 set(CUDALAB_VCPKG_ROOT "")
+set(cudalab_vcpkg_candidates "")
+
 if(EXISTS "${CUDALAB_ENV_FILE}")
     string(JSON cudalab_vcpkg_root_value ERROR_VARIABLE cudalab_vcpkg_root_error
         GET "${cudalab_env_json}" vcpkg root)
     if(NOT cudalab_vcpkg_root_error AND cudalab_vcpkg_root_value)
-        set(CUDALAB_VCPKG_ROOT "${cudalab_vcpkg_root_value}")
+        list(APPEND cudalab_vcpkg_candidates "${cudalab_vcpkg_root_value}")
     endif()
-endif()
-if(NOT CUDALAB_VCPKG_ROOT AND
-   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.vcpkg/scripts/buildsystems/vcpkg.cmake")
-    set(CUDALAB_VCPKG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.vcpkg")
-endif()
-if(NOT CUDALAB_VCPKG_ROOT AND DEFINED ENV{VCPKG_ROOT})
-    set(CUDALAB_VCPKG_ROOT "$ENV{VCPKG_ROOT}")
 endif()
 
-if(CUDALAB_VCPKG_ROOT AND NOT CMAKE_TOOLCHAIN_FILE)
-    set(cudalab_vcpkg_toolchain "${CUDALAB_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-    if(EXISTS "${cudalab_vcpkg_toolchain}")
-        set(CMAKE_TOOLCHAIN_FILE "${cudalab_vcpkg_toolchain}" CACHE FILEPATH "vcpkg toolchain file")
-    else()
-        message(WARNING "cudalab: vcpkg root '${CUDALAB_VCPKG_ROOT}' has no scripts/buildsystems/vcpkg.cmake, building without vcpkg")
+if(DEFINED ENV{VCPKG_ROOT} AND "$ENV{VCPKG_ROOT}")
+    list(APPEND cudalab_vcpkg_candidates "$ENV{VCPKG_ROOT}")
+endif()
+
+find_program(CUDALAB_VCPKG_EXECUTABLE NAMES vcpkg)
+if(CUDALAB_VCPKG_EXECUTABLE)
+    # Resolve symlinks so /usr/local/bin/vcpkg still yields the real root.
+    file(REAL_PATH "${CUDALAB_VCPKG_EXECUTABLE}" cudalab_vcpkg_exe_real)
+    get_filename_component(cudalab_vcpkg_from_path "${cudalab_vcpkg_exe_real}" DIRECTORY)
+    list(APPEND cudalab_vcpkg_candidates "${cudalab_vcpkg_from_path}")
+endif()
+
+if(WIN32)
+    list(APPEND cudalab_vcpkg_candidates "C:/vcpkg")
+
+    # Visual Studio ships a vcpkg bundle; vswhere is the supported way to find
+    # the installation that has the C++ toolset.
+    find_program(CUDALAB_VSWHERE_EXECUTABLE NAMES vswhere.exe
+        HINTS "C:/Program Files (x86)/Microsoft Visual Studio/Installer"
+              "C:/Program Files/Microsoft Visual Studio/Installer")
+    if(CUDALAB_VSWHERE_EXECUTABLE)
+        execute_process(
+            COMMAND "${CUDALAB_VSWHERE_EXECUTABLE}" -latest -products *
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+                -property installationPath
+            OUTPUT_VARIABLE cudalab_vs_path
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(cudalab_vs_path)
+            file(TO_CMAKE_PATH "${cudalab_vs_path}" cudalab_vs_path)
+            list(APPEND cudalab_vcpkg_candidates "${cudalab_vs_path}/VC/vcpkg")
+        endif()
     endif()
+endif()
+
+foreach(cudalab_vcpkg_candidate IN LISTS cudalab_vcpkg_candidates)
+    if(NOT CUDALAB_VCPKG_ROOT AND
+       EXISTS "${cudalab_vcpkg_candidate}/scripts/buildsystems/vcpkg.cmake")
+        set(CUDALAB_VCPKG_ROOT "${cudalab_vcpkg_candidate}")
+    endif()
+endforeach()
+
+# Build trees configured while vcpkg lived in the repository's .vcpkg/ keep that
+# toolchain in their cache; replace it so they follow the detected installation.
+set(cudalab_vcpkg_stale FALSE)
+if(CMAKE_TOOLCHAIN_FILE MATCHES "[\\\\/]\\.vcpkg[\\\\/]")
+    set(cudalab_vcpkg_stale TRUE)
+endif()
+
+if(CUDALAB_VCPKG_ROOT AND (NOT CMAKE_TOOLCHAIN_FILE OR cudalab_vcpkg_stale))
+    set(CMAKE_TOOLCHAIN_FILE
+        "${CUDALAB_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE FILEPATH "vcpkg toolchain file" FORCE)
+    message(STATUS "cudalab: vcpkg -> ${CUDALAB_VCPKG_ROOT}")
+elseif(NOT CUDALAB_VCPKG_ROOT)
+    message(STATUS "cudalab: no vcpkg installation found (set VCPKG_ROOT, put vcpkg on PATH, or install Visual Studio's vcpkg); building without vcpkg")
 endif()
 
 # The CUDA compiler search only ever looks on PATH, but a toolkit installed
@@ -270,12 +320,12 @@ if(CUDALAB_BUILD_TESTS AND BUILD_TESTING)
         message(STATUS "cudalab: Catch2 ${Catch2_VERSION} found -> unit tests enabled")
     else()
         message(WARNING
-            "cudalab: Catch2 not found - unit tests disabled. Either env.json's "
-            "vcpkg.root (or the VCPKG_ROOT environment variable) does not point "
-            "at a vcpkg checkout, or this build tree was first configured before "
-            "vcpkg was added: CMake reads CMAKE_TOOLCHAIN_FILE only on a build "
-            "tree's first configure, so delete ${CMAKE_BINARY_DIR} and configure "
-            "again.")
+            "cudalab: Catch2 not found - unit tests disabled. No usable vcpkg "
+            "installation was found (set VCPKG_ROOT, put vcpkg on PATH, or "
+            "install the vcpkg component in Visual Studio), or this build tree "
+            "was first configured before vcpkg was added: CMake reads "
+            "CMAKE_TOOLCHAIN_FILE only on a build tree's first configure, so "
+            "delete ${CMAKE_BINARY_DIR} and configure again.")
     endif()
 elseif(NOT BUILD_TESTING)
     message(STATUS "cudalab: BUILD_TESTING=OFF, unit tests disabled")

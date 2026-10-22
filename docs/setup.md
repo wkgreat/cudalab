@@ -107,8 +107,9 @@ CMake 的 `native` 自动探测，后者由 pixi 放进 PATH。`cuda.arch` 仍�
 
 探测不出来的（机器上装了多个 CUDA / 多个 Windows SDK、想固定某个版本）才需要手工改。
 
-`vcpkg.root` 目前**不在自动探测范围**：`env.json` 里没有它就回退到环境变量
-`VCPKG_ROOT`（vcpkg 自己的约定），两者都没有时只是跳过单元测试，不影响 demo 构建。
+`vcpkg.root` 一般不用写：CMake 会依次找 `VCPKG_ROOT`、PATH 上的 `vcpkg`、
+Windows 的 `C:/vcpkg` 和 Visual Studio 自带的 vcpkg（详见 §12）。机器上有多个
+vcpkg 安装、想固定其中一个时才需要写进 `env.json`。
 
 ## 4. 构建脚本与执行顺序
 
@@ -271,7 +272,7 @@ project(cudalab ... LANGUAGES CXX CUDA)
 {
   "name": "cudalab",
   "version": "1.0.0",
-  "dependencies": [ "catch2", "opencl" ],
+  "dependencies": [ "catch2", "opencl", "fmt" ],
   "builtin-baseline": "e12aaf7336cc1e348c43a1244f348451b534c0a9"
 }
 ```
@@ -279,33 +280,32 @@ project(cudalab ... LANGUAGES CXX CUDA)
 `builtin-baseline` 钉在 vcpkg 仓库的一个 commit 上，换机器、换时间都装到同一个
 catch2 版本（本机实测 **3.15.3**）。
 
-### vcpkg 根目录从哪来
+### vcpkg 从哪来
 
-按优先级找三个地方，`CMakeLists.txt` 在 `project()` **之前**决定用哪个：
+vcpkg **程序本身不由 pixi 管理**，用的是机器上已有的安装。`CMakeLists.txt` 在
+`project()` **之前**按下面的顺序，找第一个带 `scripts/buildsystems/vcpkg.cmake`
+的目录：
 
-1. `env.json` 里的 `vcpkg.root`（机器相关，可手写，优先级最高）
-2. 仓库里的 `.vcpkg/`（**pixi 管理的那份**，`pixi run vcpkg` 生成）
-3. 环境变量 `VCPKG_ROOT`（vcpkg 自己的约定）
+1. `env.json` 里的 `vcpkg.root`（显式覆盖，可选）
+2. 环境变量 `VCPKG_ROOT`（vcpkg 自己的约定）
+3. PATH 上的 `vcpkg`（取可执行文件所在目录，符号链接会先解析）
+4. Windows：`C:/vcpkg`
+5. Windows：Visual Studio 自带的 `VC/vcpkg`（用 vswhere 定位）
+
+Windows 上通常不用单独装：VS 的「使用 C++ 的桌面开发」工作负载自带 vcpkg，
+`VCPKG_ROOT` 一般也已经指向它。Linux 上装好 vcpkg 后设置 `VCPKG_ROOT`，或者让
+`vcpkg` 出现在 PATH 上即可。
 
 选定后设置 `CMAKE_TOOLCHAIN_FILE`，配置阶段 vcpkg 就会自动读取 `vcpkg.json`、
-把 catch2/opencl 装到 `build/<preset>/vcpkg_installed/`（该目录已被 git 忽略）。
-命令行显式传 `-DCMAKE_TOOLCHAIN_FILE=...` 仍然优先；三个地方都没有就**跳过
-vcpkg**，项目照常构建，配置末尾给一条 warning。
-
-推荐用第 2 种，也就是让 pixi 管：
-
-```bash
-pixi run vcpkg     # 克隆 microsoft/vcpkg 到 .vcpkg/ 并 bootstrap，可重复执行
-```
-
-`scripts/setup-vcpkg.ps1` 做的是**完整克隆**（不是 `--depth 1`）：vcpkg 解析
-`builtin-baseline` 要用 git 读那个 commit，浅克隆会缺对象、报
-`failed to 'git show' versions/baseline.json`（本机踩过，`git fetch` 该 commit 才修好）。
-`.vcpkg/` 已被 git 忽略，重复执行只会检查有没有 bootstrap 过。
+把 catch2/fmt/opencl 装到 `build/<preset>/vcpkg_installed/`（该目录已被 git 忽略）。
+命令行显式传 `-DCMAKE_TOOLCHAIN_FILE=...` 仍然优先；一处都找不到就**跳过 vcpkg**，
+项目照常构建，配置末尾给一条 warning，单元测试关闭。
 
 > **坑**：CMake 只在 build tree **第一次** configure 时读 `CMAKE_TOOLCHAIN_FILE`。
-> 在已有的 `build/<preset>` 上新增 vcpkg 不会生效，提示会是 “Catch2 not found”。
-> 删掉 `build/<preset>` 重新配置即可 —— 构建目录本来就是可再生产物。
+> 已有的 `build/<preset>` 如果还是旧配置（例如指向已废弃的仓库内 `.vcpkg/`），
+> 不会自动换 vcpkg，提示会是 “Catch2 not found”。`scripts/build-cmake.ps1`
+> 检测到 cache 指向 `.vcpkg/` 时会自动 `cmake --fresh` 重配；其它情况删掉
+> `build/<preset>` 重新配置即可 —— 构建目录本来就是可再生产物。
 
 ### 测试怎么组织
 

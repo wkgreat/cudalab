@@ -36,8 +36,11 @@ compile_commands.json
 vcpkg_installed/
 vcpkg-manifest-install.log
 
-# vcpkg checkout managed by pixi (scripts/setup-vcpkg.ps1)
+# Leftover in-repo vcpkg checkout (the build uses the system/VS vcpkg instead)
 .vcpkg/
+
+# Local scratch files
+temp/
 
 # Editor
 *.code-workspace

@@ -67,8 +67,19 @@ if (-not $BuildPreset) {
 $vcvars = Get-CudalabVcVars
 
 $useFresh = $false
+$configureDir = Resolve-CudalabBuildDir -RepoRoot $repoRoot -Preset $Preset
+$cacheFile = Join-Path $configureDir 'CMakeCache.txt'
+
+# A build tree configured while vcpkg lived in the repository's .vcpkg/ keeps
+# that toolchain in its cache forever. Reconfigure from scratch so the tree
+# follows the current system/VS vcpkg instead.
+if (-not $Clean -and (Test-Path $cacheFile) -and
+    (Select-String -Path $cacheFile -Pattern '^CMAKE_TOOLCHAIN_FILE[^=]*=.*[\\/]\.vcpkg[\\/]' -Quiet)) {
+    Write-Host '==> build tree still points at the retired .vcpkg/ checkout; reconfiguring from scratch' -ForegroundColor Yellow
+    $useFresh = $true
+}
+
 if ($Clean) {
-    $configureDir = Resolve-CudalabBuildDir -RepoRoot $repoRoot -Preset $Preset
     if (Test-Path $configureDir) {
         try {
             Remove-Item -Recurse -Force $configureDir -ErrorAction Stop

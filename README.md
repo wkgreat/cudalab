@@ -11,20 +11,22 @@ CUDA 实验项目。一个 demo 一个目录，每个 demo 编译成一个独立
 3. 安装 CUDA Toolkit
 4. 克隆本仓库并进入仓库目录
 5. `pixi install`
-6. `pixi run vcpkg`（把 vcpkg 装到仓库的 `.vcpkg/`，供 Catch2/OpenCL）
-7. `pixi run build-debug`（首次会自动探测本机并生成 `env.json`）
-8. `pixi run test`
-9. 路径探测不准时：`pixi run env`，然后重新 `pixi run build`
+6. `pixi run build-debug`（首次会自动探测本机并生成 `env.json`）
+7. `pixi run test`
+8. 路径探测不准时：`pixi run env`，然后重新 `pixi run build`
+
+vcpkg 用系统里已有的安装；Windows 上没装时用 Visual Studio 自带的（见 `docs/setup.md`）。
 
 ### Linux
 
 1. 安装 pixi：`curl -fsSL https://pixi.sh/install.sh | bash`
 2. 克隆本仓库并进入仓库目录
 3. `pixi install`
-4. `pixi run vcpkg`
-5. `pixi run build`
-6. `pixi run test`
-7. 单独刷新 clangd 编译库：`pixi run env`（需先配置过一次）
+4. `pixi run build`
+5. `pixi run test`
+6. 单独刷新 clangd 编译库：`pixi run env`（需先配置过一次）
+
+vcpkg 用系统里已有的安装（`VCPKG_ROOT` 或 PATH 上的 `vcpkg`），见 `docs/setup.md`。
 
 ### VS Code
 

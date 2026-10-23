@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <cstdio>
 #include <cstdlib>
 #include <fmt/format.h>
 
@@ -76,6 +77,36 @@ TEST_CASE("cuda cum prod by cub", "[cuda][cum_prod]") {
 
   free(h_vals);
   free(h_rets);
+}
+
+TEST_CASE("cuda segmented cum prod inclusive", "[cuda][cum_prod]") {
+
+  size_t n = 12;
+  size_t stride = 3;
+  float *h_vals = (float *)malloc(sizeof(float) * n);
+  for (int i = 0; i < n; ++i) {
+    h_vals[i] = i;
+  }
+  float *h_rets = (float *)malloc(sizeof(float) * n);
+
+  cudalab::cudaSegCumProdByCub(h_vals, h_rets, stride, n, true);
+
+  int s = 0;
+  float p = 0.0;
+
+  for (int i = 0; i < n; ++i) {
+
+    s %= stride;
+
+    if (s == 0) {
+      p = 1.0;
+    } else {
+      p *= h_vals[i - 1];
+    }
+    REQUIRE_THAT(h_rets[i], Catch::Matchers::WithinAbs(p, 1E-6));
+
+    s += 1;
+  }
 }
 
 TEST_CASE("cuda cum prod benchmark", "[cuda][cum_prod][benchmark]") {

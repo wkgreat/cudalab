@@ -1,10 +1,15 @@
 #include "cum_prod.h"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cub/cub.cuh>
 #include <cub/device/device_scan.cuh>
+#include <cub/device/device_segmented_scan.cuh>
 #include <cuda_device_runtime_api.h>
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
+#include <vector>
 
 namespace cudalab {
 
@@ -103,6 +108,62 @@ int cudaCumProdByCub(float *h_vals, float *h_rets, size_t N) {
   cudaFree(d_temps);
   cudaFree(d_vals);
   cudaFree(d_rets);
+
+  return 0;
+}
+
+int cudaSegCumProdByCub(float *h_vals, float *h_rets, size_t stride, size_t n,
+                        bool exlusive) {
+
+  MultiplyOp mul_op;
+
+  void *d_temp = nullptr;
+  size_t tempBytes = 0;
+  std::int64_t nSegs = (n + stride - 1) / stride;
+
+  std::vector<size_t> h_begin(nSegs);
+  std::vector<size_t> h_end(nSegs);
+
+  for (size_t i = 0; i < nSegs; ++i) {
+    h_begin[i] = i * stride;
+    h_end[i] = std::min((i + 1) * stride, n);
+  }
+
+  float *d_vals;
+  cudaMalloc(&d_vals, sizeof(float) * n);
+  cudaMemcpy(d_vals, h_vals, sizeof(float) * n, cudaMemcpyHostToDevice);
+  float *d_rets;
+  cudaMalloc(&d_rets, sizeof(float) * n);
+  size_t *d_begin, *d_end;
+  cudaMalloc(&d_begin, sizeof(size_t) * nSegs);
+  cudaMalloc(&d_end, sizeof(size_t) * nSegs);
+  cudaMemcpy(d_begin, h_begin.data(), sizeof(size_t) * nSegs,
+             cudaMemcpyHostToDevice);
+  cudaMemcpy(d_end, h_end.data(), sizeof(size_t) * nSegs,
+             cudaMemcpyHostToDevice);
+
+  if (exlusive) {
+    cub::DeviceSegmentedScan::ExclusiveSegmentedScan(nullptr, tempBytes, d_vals,
+                                                     d_rets, d_begin, d_end,
+                                                     nSegs, mul_op, 1.0f);
+    cudaMalloc(&d_temp, tempBytes);
+    cub::DeviceSegmentedScan::ExclusiveSegmentedScan(
+        d_temp, tempBytes, d_vals, d_rets, d_begin, d_end, nSegs, mul_op, 1.0f);
+  } else {
+    cub::DeviceSegmentedScan::InclusiveSegmentedScan(
+        nullptr, tempBytes, d_vals, d_rets, d_begin, d_end, nSegs, mul_op);
+    cudaMalloc(&d_temp, tempBytes);
+    cub::DeviceSegmentedScan::InclusiveSegmentedScan(
+        d_temp, tempBytes, d_vals, d_rets, d_begin, d_end, nSegs, mul_op);
+  }
+
+  cudaMemcpy(h_rets, d_rets, sizeof(float) * n, cudaMemcpyDeviceToHost);
+
+  cudaFree(d_temp);
+  cudaFree(d_begin);
+  cudaFree(d_end);
+  cudaFree(d_rets);
+  cudaFree(d_vals);
 
   return 0;
 }

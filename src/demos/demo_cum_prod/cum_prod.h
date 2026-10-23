@@ -18,4 +18,8 @@ int cudaCumProd1Phase(float *h_vals, float *h_rets, size_t N);
 // invoke scan of Cub lib
 int cudaCumProdByCub(float *h_vals, float *h_rets, size_t N);
 
+// cub::DeviceSegmentedScan
+int cudaSegCumProdByCub(float *h_vals, float *h_rets, size_t stride, size_t n,
+                        bool exlusive);
+
 } // namespace cudalab

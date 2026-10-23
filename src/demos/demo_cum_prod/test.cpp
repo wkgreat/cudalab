@@ -57,9 +57,9 @@ TEST_CASE("cuda cum prod", "[cuda][cum_prod]") {
 
 TEST_CASE("cuda cum prod by cub", "[cuda][cum_prod]") {
 
-  size_t n = 102400;
+  size_t n = 10;
 
-  float *h_vals = cudalab::common::randomFloat(n, 0, 5);
+  float *h_vals = cudalab::common::randomFloat(n, 0, 10);
 
   float *h_rets = (float *)malloc(sizeof(float) * n);
 

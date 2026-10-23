@@ -20,6 +20,10 @@ opencl-headers = "*"
 gxx_linux-64 = ">=13,<15"
 ocl-icd = "*"
 
+[target.linux-64.activation.env]
+# conda 的 cuda.icd 无效，只加载 NVIDIA ICD（同时避开 gf.icd 的退出崩溃）
+OCL_ICD_VENDORS = "/etc/OpenCL/vendors/nvidia.icd"
+
 [target.win-64.dependencies]
 vs2026_win-64 = "*"
 khronos-opencl-icd-loader = "*"
@@ -32,6 +36,7 @@ build = "pixi run build-release"
 clean = "python scripts/build_cmake.py --preset ninja-debug --clean"
 run = "python scripts/build_cmake.py --preset ninja-debug --run"
 profile = "python scripts/profile.py"
-test-debug = "ctest -V --preset ninja-debug"
-test-release = "ctest -V --preset ninja-release"
-test = "ctest -V --preset ninja-release"
+test-debug = "pixi run build-debug && ctest --preset ninja-debug"
+test-release = "pixi run build-release && ctest --preset ninja-release"
+test = "pixi run test-release"
+benchmark = "ctest -V --preset ninja-release -R benchmark"

@@ -24,33 +24,47 @@ namespace ocl {
 int oclAddOne(int *h_vals, int n) {
 
   cl_int err;
-  cl_platform_id platform;
+  cl_platform_id platform = NULL;
   cl_device_id device;
   cl_context ctx;
   cl_command_queue queue;
   cl_program prog;
   cl_kernel kernel;
 
-  cl_uint num_platforms;
+  cl_uint num_platforms = 0;
 
-  clGetPlatformIDs(0, NULL, &num_platforms);
+  err = clGetPlatformIDs(0, NULL, &num_platforms);
+  CHECK_ERR(err, "get platform count");
+  if (num_platforms == 0) {
+    fprintf(stderr, "Error: no OpenCL platform found\n");
+    return 1;
+  }
 
   cl_platform_id *platforms =
       (cl_platform_id *)malloc(sizeof(cl_platform_id) * num_platforms);
 
   err = clGetPlatformIDs(num_platforms, platforms, NULL);
+  if (err != CL_SUCCESS) {
+    free(platforms);
+    fprintf(stderr, "Error %d at %s\n", err, "get platforms");
+    return 1;
+  }
 
-  char platformName[128];
-  for (int i = 0; i < num_platforms; ++i) {
+  cl_platform_id nvidia = NULL;
+  char platformName[128] = {};
+  for (cl_uint i = 0; i < num_platforms; ++i) {
     err = clGetPlatformInfo(platforms[i], CL_PLATFORM_NAME,
-                            sizeof(platformName), platformName, NULL);
+                            sizeof(platformName) - 1, platformName, NULL);
     CHECK_ERR(err, "get platform info");
-    printf("platform[%d] = %s\n", i, platformName);
+    printf("platform[%u] = %s\n", i, platformName);
 
     if (strstr(platformName, "NVIDIA") != NULL) {
-      platform = platforms[i];
+      nvidia = platforms[i];
     }
   }
+
+  platform = nvidia != NULL ? nvidia : platforms[0];
+  free(platforms);
 
   err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &device, NULL);
 

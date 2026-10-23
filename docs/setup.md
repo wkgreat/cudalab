@@ -262,6 +262,11 @@ Catch2、fmt、OpenCL 全部由 pixi 提供，写在 `pixi.toml` 的 `[dependenc
 > Catch2 3.16.1 的 `catch_discover_tests` 会把 `EXTRA_ARGS` 当成单个参数传给测试，
 > 结果为 `Unrecognised token: --benchmark-samples;20;...`；这里钉到 3.15.3。
 
+> **Linux OpenCL 坑**：pixi 的 `cuda-opencl` 会在环境里放一个 `etc/OpenCL/vendors/cuda.icd`，
+> ocl-icd 把它当 ICD 加载会失败（缺 `clIcdGetPlatformIDsKHR`），平台数直接变 0。
+> `pixi.toml` 已用 `[target.linux-64.activation.env]` 把 `OCL_ICD_VENDORS` 指向
+> `/etc/OpenCL/vendors/nvidia.icd`，只加载 NVIDIA ICD，也绕开了 `gf.icd` 的退出崩溃。
+
 pixi 把这些包装进当前环境（`CONDA_PREFIX`），`CMakeLists.txt` 在 `project()` 之前
 把 `CONDA_PREFIX`（Windows 还有 `CONDA_PREFIX/Library`）加入 `CMAKE_PREFIX_PATH`，
 因此 `find_package(... CONFIG REQUIRED)` 直接命中，不需要 `CMAKE_TOOLCHAIN_FILE`，

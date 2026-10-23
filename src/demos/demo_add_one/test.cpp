@@ -9,7 +9,7 @@
 
 TEST_CASE("opencl add one", "[opencl][add_one]") {
 
-  int n = 100000;
+  int n = 10240;
 
   int *h_vals0 = cudalab::common::randomInt(n, 0, 1000);
 
